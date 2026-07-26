@@ -20,8 +20,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 function getOwner(request: Request, env: Env): string | null {
-  const owner = request.headers.get("cf-access-authenticated-user-email")
-    || request.headers.get("oai-authenticated-user-email");
+  const owner = request.headers.get("cf-access-authenticated-user-email");
   if (owner) return owner.trim().toLowerCase().slice(0, 254);
   if (env.ALLOW_LOCAL_GUEST === "true") return "local-preview@solara.invalid";
   return null;
