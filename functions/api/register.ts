@@ -38,6 +38,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   if (validationError) return json({ error: validationError }, 400);
 
   try {
+  try {
     await ensureAuthTables(env.DB);
   } catch (error) {
     console.error("Failed to initialize auth tables", error);
@@ -77,4 +78,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     authenticated: true,
     user: { id, username, displayName: username },
   }, 201, { "Set-Cookie": sessionCookie(token, request) });
+  } catch (error) {
+    console.error("Registration failed", error);
+    return json({ error: "注册服务暂时不可用，请稍后再试" }, 500);
+  }
 }

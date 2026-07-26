@@ -39,6 +39,7 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   if (validationError) return json({ error: "用户名或密码错误" }, 401);
 
   try {
+  try {
     await ensureAuthTables(env.DB);
   } catch (error) {
     console.error("Failed to initialize auth tables", error);
@@ -79,4 +80,8 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     authenticated: true,
     user: { id: user.id, username: user.username, displayName: user.displayName },
   }, 200, { "Set-Cookie": sessionCookie(token, request) });
+  } catch (error) {
+    console.error("Login failed", error);
+    return json({ error: "登录服务暂时不可用，请稍后再试" }, 500);
+  }
 }

@@ -10,7 +10,11 @@ export type SessionUser = {
 
 export const SESSION_COOKIE = "solara_session";
 export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
-export const PASSWORD_ITERATIONS = 210_000;
+// Cloudflare Pages Functions has a strict CPU budget. A very high PBKDF2
+// count caused registration workers to terminate with error 1101 before they
+// could return a response. Login throttling remains the primary protection
+// for the intentionally short, user-chosen passwords supported by this app.
+export const PASSWORD_ITERATIONS = 20_000;
 
 const encoder = new TextEncoder();
 
