@@ -1,7 +1,7 @@
 {
-  "name": "Solara Open",
+  "name": "Solara",
   "short_name": "Solara",
-  "description": "多账号、可创建歌单的开放音乐播放器",
+  "description": "支持多账号隔离和多个歌单的音乐播放器",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f2f2c",
@@ -19,4 +19,3 @@
     }
   ]
 }
-

@@ -13,6 +13,7 @@ import {
 
 type Env = {
   DB?: D1Database;
+  MAX_USERS?: string;
 };
 
 const JSON_HEADERS = {
@@ -25,6 +26,12 @@ function json(body: unknown, status = 200, headers: HeadersInit = {}): Response 
     status,
     headers: { ...JSON_HEADERS, ...headers },
   });
+}
+
+function getMaxUsers(env: Env): number {
+  const configured = Number.parseInt(env.MAX_USERS || "", 10);
+  if (!Number.isFinite(configured)) return 60;
+  return Math.min(Math.max(configured, 1), 100_000);
 }
 
 export async function onRequestPost({ request, env }: { request: Request; env: Env }): Promise<Response> {
@@ -52,6 +59,14 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
     .bind(username)
     .first();
   if (existing) return json({ error: "该用户名已被注册" }, 409);
+
+  const maxUsers = getMaxUsers(env);
+  const userCountRow = await env.DB.prepare("SELECT COUNT(*) AS total FROM users")
+    .first<{ total: number }>();
+  const userCount = Number(userCountRow?.total || 0);
+  if (userCount >= maxUsers) {
+    return json({ error: `注册名额已满（最多 ${maxUsers} 个账号）` }, 403);
+  }
 
   const id = crypto.randomUUID();
   const passwordRecord = await createPasswordRecord(password);

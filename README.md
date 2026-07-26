@@ -1,21 +1,19 @@
-# Solara Open
+# Solara
 
-基于 [akudamatata/Solara](https://github.com/akudamatata/Solara) 改造的多账号开放音乐播放器。
+基于 [akudamatata/Solara](https://github.com/akudamatata/Solara) 增加多账号隔离与多歌单功能。
 
 本项目继续遵守原项目的 CC BY-NC-SA 协议，仅限非商业使用，衍生项目必须保留原项目署名并以相同协议开源。
 
 ## 与原版的区别
 
 - 免费的用户名/密码注册登录，不依赖 Cloudflare Zero Trust 付费授权
-- 密码使用 PBKDF2-SHA-256、独立随机盐和 210,000 次迭代后存储
+- 密码使用 PBKDF2-SHA-256 与独立随机盐处理后存储
 - HttpOnly、Secure、SameSite 会话 Cookie，30 天自动失效
 - Cloudflare D1 按内部用户 ID 隔离数据
 - 每个账号拥有独立收藏、播放记录和多个命名歌单
 - 可新建、切换、重命名、删除歌单
-- Audius：默认主音源，无密钥即可搜索和播放
-- Jamendo：配置免费 Client ID 后启用，严格按 `audiodownload_allowed` 展示下载
-- Internet Archive：仅检索 Netlabels 集合中带 Creative Commons 或公共领域标记的音频
-- GD 音乐台：默认可用的实验性备用搜索，只显示元数据，不在本站播放或下载
+- 保留原版 Solara 的网易云、酷我、JOOX、哔哩哔哩搜索入口
+- 保留原版的播放、歌词、音质选择与下载流程
 - 支持安装为 PWA，手机和电脑均可使用
 
 音频直接从各开放平台传输，Cloudflare Worker 不代理或缓存音频文件。
@@ -37,26 +35,22 @@ Binding name: DB
 无需配置 Cloudflare Access。首次访问站点会跳转到 `/login`，用户可以自行注册：
 
 - 用户名：3–24 位字母、数字或下划线，不区分大小写
-- 密码：10–128 个字符
+- 密码：4–128 个字符
 - 连续登录失败 5 次后，该用户名与来源 IP 的组合会暂时锁定 10 分钟
 - 当前版本不提供邮箱验证或密码找回，请用户自行妥善保管密码
 
 服务端只保存加盐后的密码派生值，不保存明文密码。会话令牌仅通过 HttpOnly Cookie 传输，D1 中只保存令牌的 SHA-256 摘要。
 
-### 3. 环境变量
+### 3. 音乐接口
 
-Pages 项目可配置：
+默认使用原版 Solara 的 GD 音乐台接口。账号注册上限默认是 60；需要调整时在 Cloudflare Pages 的环境变量中修改：
 
 ```dotenv
-# 可选。到 https://developer.jamendo.com/ 免费申请。
-JAMENDO_CLIENT_ID=
-
-# 默认开启备用搜索；设为 false 可完全关闭。
-GD_EXPERIMENTAL_ENABLED=true
-
-# 可选，仅在 GD_EXPERIMENTAL_ENABLED=true 时使用。
 API_BASE_URL=https://music-api.gdstudio.xyz/api.php
+MAX_USERS=60
 ```
+
+修改 `MAX_USERS` 后重新部署一次即可生效。达到上限只会停止新注册，已有账号不受影响。
 
 ### 4. Pages 设置
 
@@ -69,14 +63,9 @@ Build output directory: /
 
 也可以直接连接 GitHub 仓库，每次推送自动部署。
 
-## 音乐与下载规则
+## 音乐与下载
 
-- Audius：提供完整在线播放；本站不提供下载。
-- Jamendo：只有 API 明确返回 `audiodownload_allowed=true` 的曲目才出现下载按钮。
-- Internet Archive：只接入带开放许可标记的 Netlabels 音频，可播放和下载。
-- GD：只用于检查搜索覆盖率；不解析播放地址，不提供下载。
-
-Spotify、网易云、QQ 音乐等商业平台内容应使用其官方客户端、网页组件或正式授权 API。本项目不提供 stream ripping、无损解析或平台限制绕过。
+音乐搜索、播放与下载行为与原版 Solara 保持一致，实际可用性取决于 GD 音乐台接口及对应平台。
 
 ## 本地开发
 

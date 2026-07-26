@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>登录或注册 - Solara Open</title>
+  <title>登录或注册 - Solara</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/favicon.png">
@@ -517,7 +517,7 @@
           <img src="/favicon.svg" alt="">
         </div>
         <div class="title-group">
-          <h1 class="login-title">Solara Open</h1>
+          <h1 class="login-title">Solara</h1>
           <p class="login-desc">每个账号拥有独立歌单与收藏</p>
         </div>
       </header>
@@ -551,7 +551,7 @@
           </div>
         </div>
         <p class="login-hint" id="auth-hint">使用你的用户名和密码登录；会话将在 30 天后过期。</p>
-        <button type="submit" id="auth-submit">进入 Solara Open</button>
+        <button type="submit" id="auth-submit">进入 Solara</button>
       </form>
       <footer class="login-footer" aria-live="polite">
         <span class="status-message"><span class="status-dot" aria-hidden="true"></span>不会直接保存你的原始密码</span>
@@ -603,7 +603,7 @@
       if (passwordInput instanceof HTMLInputElement) {
         passwordInput.autocomplete = registering ? "new-password" : "current-password";
       }
-      if (submitButton) submitButton.textContent = registering ? "注册并进入" : "进入 Solara Open";
+      if (submitButton) submitButton.textContent = registering ? "注册并进入" : "进入 Solara";
       if (authHint) {
         authHint.textContent = registering
           ? "密码至少 4 个字符，不限数字或字母；当前不提供找回功能。"

@@ -658,10 +658,10 @@ function buildAudioProxyUrl(url) {
 }
 
 const SOURCE_OPTIONS = [
-    { value: "audius", label: "Audius 开放音乐" },
-    { value: "jamendo", label: "Jamendo CC 音乐" },
-    { value: "archive", label: "Internet Archive" },
-    { value: "gd", label: "GD 实验搜索" }
+    { value: "netease", label: "网易云音乐" },
+    { value: "kuwo", label: "酷我音乐" },
+    { value: "joox", label: "JOOX音乐" },
+    { value: "bilibili", label: "哔哩哔哩" }
 ];
 
 function normalizeSource(value) {
@@ -850,7 +850,7 @@ const API = {
         }
     },
 
-    search: async (keyword, source = "audius", count = 20, page = 1) => {
+    search: async (keyword, source = "netease", count = 20, page = 1) => {
         const signature = API.generateSignature();
         const url = `${API.baseUrl}?types=search&source=${source}&name=${encodeURIComponent(keyword)}&count=${count}&pages=${page}&s=${signature}`;
 
@@ -870,11 +870,6 @@ const API = {
                 url_id: song.url_id,
                 lyric_id: song.lyric_id,
                 source: song.source,
-                playable: song.playable !== false,
-                download_allowed: Boolean(song.download_allowed),
-                download_url: song.download_url || "",
-                license_url: song.license_url || "",
-                external_url: song.external_url || "",
             }));
         } catch (error) {
             debugLog(`API错误: ${error.message}`);
@@ -925,7 +920,7 @@ const API = {
                 id: track.id,
                 name: track.name,
                 artist: Array.isArray(track.ar) ? track.ar.map(artist => artist.name).join(" / ") : "",
-                source: "audius",
+                source: "netease",
                 lyric_id: track.id,
                 pic_id: track.al?.pic_str || track.al?.pic || track.al?.picUrl || "",
             }));
@@ -937,22 +932,17 @@ const API = {
 
     getSongUrl: (song, quality = "320") => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=url&id=${encodeURIComponent(song.url_id || song.id)}&source=${song.source || "audius"}&br=${quality}&s=${signature}`;
+        return `${API.baseUrl}?types=url&id=${song.id}&source=${song.source || "netease"}&br=${quality}&s=${signature}`;
     },
 
     getLyric: (song) => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=lyric&id=${encodeURIComponent(song.lyric_id || song.id)}&source=${song.source || "audius"}&s=${signature}`;
+        return `${API.baseUrl}?types=lyric&id=${song.lyric_id || song.id}&source=${song.source || "netease"}&s=${signature}`;
     },
 
     getPicUrl: (song) => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=pic&id=${encodeURIComponent(song.pic_id)}&source=${song.source || "audius"}&size=300&s=${signature}`;
-    },
-
-    getDownloadUrl: (song) => {
-        const candidate = song.download_url || song.url_id || "";
-        return `${API.baseUrl}?types=url&id=${encodeURIComponent(candidate)}&source=${song.source || "audius"}`;
+        return `${API.baseUrl}?types=pic&id=${song.pic_id}&source=${song.source || "netease"}&size=300&s=${signature}`;
     }
 };
 
@@ -4311,7 +4301,6 @@ function createSearchResultItem(song, index) {
     selectionToggle.className = "search-result-select";
     selectionToggle.type = "button";
     selectionToggle.innerHTML = '<i class="fas fa-check"></i>';
-    selectionToggle.disabled = song.playable === false;
     selectionToggle.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -4324,12 +4313,6 @@ function createSearchResultItem(song, index) {
     const title = document.createElement("div");
     title.className = "search-result-title";
     title.textContent = song.name || "未知歌曲";
-    const sourceBadge = document.createElement("span");
-    sourceBadge.className = `source-badge${song.source === "gd" ? " source-badge--experimental" : ""}`;
-    sourceBadge.textContent = song.source === "gd"
-        ? "GD 仅搜索"
-        : ({ audius: "Audius", jamendo: "Jamendo", archive: "Archive" }[song.source] || song.source);
-    title.appendChild(sourceBadge);
 
     const artist = document.createElement("div");
     artist.className = "search-result-artist";
@@ -4351,7 +4334,6 @@ function createSearchResultItem(song, index) {
     favoriteButton.title = "收藏";
     favoriteButton.dataset.favoriteKey = getSongKey(song) || `search-${index}`;
     favoriteButton.innerHTML = '<i class="far fa-heart"></i>';
-    favoriteButton.disabled = song.playable === false;
     favoriteButton.addEventListener("click", (event) => {
         event.stopPropagation();
         toggleFavorite(song);
@@ -4360,16 +4342,10 @@ function createSearchResultItem(song, index) {
     const playButton = document.createElement("button");
     playButton.className = "action-btn play";
     playButton.type = "button";
-    playButton.title = song.playable === false ? "前往 GD 音乐台查看" : "播放";
-    playButton.innerHTML = song.playable === false
-        ? '<i class="fas fa-arrow-up-right-from-square"></i>'
-        : '<i class="fas fa-play"></i>';
+    playButton.title = "播放";
+    playButton.innerHTML = '<i class="fas fa-play"></i>';
     playButton.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (song.playable === false && song.external_url) {
-            window.open(song.external_url, "_blank", "noopener,noreferrer");
-            return;
-        }
         playSearchResult(index);
     });
 
@@ -4378,7 +4354,6 @@ function createSearchResultItem(song, index) {
     downloadButton.type = "button";
     downloadButton.title = "下载";
     downloadButton.innerHTML = '<i class="fas fa-download"></i>';
-    downloadButton.disabled = !song.download_allowed;
     downloadButton.addEventListener("click", (event) => {
         event.stopPropagation();
         showQualityMenu(event, index, "search");
@@ -4396,10 +4371,6 @@ function createSearchResultItem(song, index) {
 
     item.addEventListener("click", (event) => {
         if (event.target.closest(".search-result-actions") || event.target.closest(".search-result-select")) {
-            return;
-        }
-        if (song.playable === false) {
-            showNotification("GD 实验源仅显示搜索结果，不提供播放或下载", "warning");
             return;
         }
         toggleSearchResultSelection(index);
@@ -4745,10 +4716,6 @@ async function downloadWithQuality(event, index, type, quality) {
     }
 
     if (!song) return;
-    if (!song.download_allowed) {
-        showNotification("该音乐源未授权此曲下载", "warning");
-        return;
-    }
 
     // 关闭菜单并移除 menu-active 类
     document.querySelectorAll(".quality-menu").forEach(menu => {
@@ -4775,10 +4742,6 @@ async function downloadWithQuality(event, index, type, quality) {
 async function playSearchResult(index) {
     const song = state.searchResults[index];
     if (!song) return;
-    if (song.playable === false) {
-        showNotification("GD 实验源仅用于搜索验证，不提供播放或下载", "warning");
-        return;
-    }
 
     try {
         // 立即隐藏搜索结果，显示播放界面
@@ -4886,7 +4849,7 @@ function getSongKey(song) {
         ? song.source.trim().toLowerCase()
         : (typeof song.platform === "string" && song.platform.trim() !== ""
             ? song.platform.trim().toLowerCase()
-            : "audius");
+            : "netease");
     const id = resolveSongId(song);
     if (id) {
         return `${source}:${id}`;
@@ -4928,7 +4891,7 @@ function sanitizeImportedSong(rawSong) {
     const sourceCandidate = rawSong.source || rawSong.platform || rawSong.provider || rawSong.vendor;
     normalized.source = typeof sourceCandidate === "string" && sourceCandidate.trim() !== ""
         ? sourceCandidate.trim()
-        : "audius";
+        : "netease";
 
     const resolvedId = resolveSongId(rawSong);
     if (resolvedId) {
@@ -5142,7 +5105,7 @@ function renderPlaylist() {
             <button class="playlist-item-favorite favorite-toggle" type="button" data-playlist-action="favorite" data-index="${index}" data-favorite-key="${songKey}" title="收藏" aria-label="收藏">
                 <i class="fa-regular fa-heart"></i>
             </button>
-            <button class="playlist-item-download" type="button" data-playlist-action="download" data-index="${index}" title="${song.download_allowed ? "下载" : "此曲不可下载"}"${song.download_allowed ? "" : " disabled"}>
+            <button class="playlist-item-download" type="button" data-playlist-action="download" data-index="${index}" title="下载">
                 <i class="fas fa-download"></i>
             </button>
             <button class="playlist-item-remove" type="button" data-playlist-action="remove" data-index="${index}" title="从播放列表移除">
@@ -5405,7 +5368,7 @@ function renderFavorites() {
             <button class="favorite-item-action favorite-item-action--add" type="button" data-favorite-action="add" data-index="${index}" title="添加到播放列表" aria-label="添加到播放列表">
                 <i class="fas fa-plus"></i>
             </button>
-            <button class="favorite-item-action favorite-item-action--download" type="button" data-favorite-action="download" data-index="${index}" title="${song.download_allowed ? "下载" : "此曲不可下载"}" aria-label="${song.download_allowed ? "下载" : "此曲不可下载"}"${song.download_allowed ? "" : " disabled"}>
+            <button class="favorite-item-action favorite-item-action--download" type="button" data-favorite-action="download" data-index="${index}" title="下载" aria-label="下载">
                 <i class="fas fa-download"></i>
             </button>
             <button class="favorite-item-action favorite-item-action--remove" type="button" data-favorite-action="remove" data-index="${index}" title="从收藏列表移除" aria-label="从收藏列表移除">
@@ -5857,10 +5820,7 @@ function waitForAudioReady(player) {
 
 async function playSong(song, options = {}) {
     const { autoplay = true, startTime = 0, preserveProgress = false, isRetry = false } = options;
-    if (!song || song.playable === false) {
-        showNotification("这个实验性搜索结果不能在本站播放", "warning");
-        return;
-    }
+    if (!song) return;
 
     window.clearTimeout(pendingPaletteTimer);
     state.audioReadyForPalette = false;
@@ -6279,11 +6239,11 @@ function pickRandomExploreGenre() {
     return genres[index];
 }
 
-const EXPLORE_RADAR_SOURCES = ["audius", "jamendo", "archive"];
+const EXPLORE_RADAR_SOURCES = ["netease", "kuwo"];
 
 function pickRandomExploreSource() {
     if (!Array.isArray(EXPLORE_RADAR_SOURCES) || EXPLORE_RADAR_SOURCES.length === 0) {
-        return "audius";
+        return "netease";
     }
     const index = Math.floor(Math.random() * EXPLORE_RADAR_SOURCES.length);
     return EXPLORE_RADAR_SOURCES[index];
@@ -6578,14 +6538,11 @@ function scrollToCurrentLyric(element, containerOverride) {
 
 // 修复：下载歌曲
 async function downloadSong(song, quality = "320") {
-    if (!song || !song.download_allowed || !song.download_url) {
-        showNotification("该曲目没有获得下载授权", "warning");
-        return;
-    }
+    if (!song) return;
     try {
         showNotification("正在准备下载...");
 
-        const audioUrl = API.getDownloadUrl(song, quality);
+        const audioUrl = API.getSongUrl(song, quality);
         const audioData = await API.fetchJson(audioUrl);
 
         if (audioData && audioData.url) {
