@@ -1,6 +1,5 @@
 type Env = {
   JAMENDO_CLIENT_ID?: string;
-  GD_EXPERIMENTAL_ENABLED?: string;
   API_BASE_URL?: string;
 };
 
@@ -193,7 +192,6 @@ async function searchArchive(query: string, count: number, page: number): Promis
 }
 
 async function searchGdExperimental(query: string, count: number, page: number, env: Env): Promise<OpenTrack[]> {
-  if (env.GD_EXPERIMENTAL_ENABLED === "false") return [];
   const upstream = env.API_BASE_URL || "https://music-api.gdstudio.xyz/api.php";
   const url = new URL(upstream);
   url.searchParams.set("types", "search");
