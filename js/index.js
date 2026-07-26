@@ -828,6 +828,67 @@ const savedCurrentPlaylist = (() => {
     return playlists.includes(stored) ? stored : "playlist";
 })();
 
+const GD_DIRECT_API_BASE_URL = "https://music-api.gdstudio.xyz/api.php";
+
+function canUseGdJsonpFallback(url) {
+    try {
+        const parsed = new URL(url, window.location.origin);
+        return parsed.origin === window.location.origin
+            && parsed.pathname === "/proxy"
+            && !parsed.searchParams.has("target");
+    } catch (_) {
+        return false;
+    }
+}
+
+function fetchGdJsonp(url) {
+    return new Promise((resolve, reject) => {
+        let parsed;
+        try {
+            parsed = new URL(url, window.location.origin);
+        } catch (error) {
+            reject(error);
+            return;
+        }
+
+        const callbackName = `__solaraGdCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        const target = new URL(GD_DIRECT_API_BASE_URL);
+        parsed.searchParams.forEach((value, key) => {
+            if (!["target", "callback", "s", "nocache"].includes(key)) {
+                target.searchParams.set(key, value);
+            }
+        });
+        target.searchParams.set("callback", callbackName);
+
+        const script = document.createElement("script");
+        const cleanup = () => {
+            window.clearTimeout(timeoutId);
+            script.remove();
+            try {
+                delete window[callbackName];
+            } catch (_) {
+                window[callbackName] = undefined;
+            }
+        };
+        const timeoutId = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("GD JSONP request timed out"));
+        }, 15000);
+
+        window[callbackName] = (data) => {
+            cleanup();
+            resolve(data);
+        };
+        script.onerror = () => {
+            cleanup();
+            reject(new Error("GD JSONP request failed"));
+        };
+        script.src = target.toString();
+        script.async = true;
+        document.head.appendChild(script);
+    });
+}
+
 // API配置 - 修复API地址和请求方式
 const API = {
     baseUrl: "/proxy",
@@ -837,8 +898,9 @@ const API = {
     },
 
     fetchJson: async (url) => {
+        let response = null;
         try {
-            const response = await fetch(url, {
+            response = await fetch(url, {
                 headers: {
                     "Accept": "application/json",
                 },
@@ -867,6 +929,16 @@ const API = {
                 return text;
             }
         } catch (error) {
+            const shouldFallback = canUseGdJsonpFallback(url)
+                && (!response || response.status >= 500);
+            if (shouldFallback) {
+                try {
+                    debugLog(`代理请求失败（${response?.status || "网络错误"}），切换 GD 直连备用通道`);
+                    return await fetchGdJsonp(url);
+                } catch (fallbackError) {
+                    console.error("GD JSONP fallback failed:", fallbackError);
+                }
+            }
             console.error("API request error:", error);
             throw error;
         }
