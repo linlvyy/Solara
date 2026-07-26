@@ -91,3 +91,8 @@ MAX_USERS=60
 ```
 
 `user_store` 的复合主键确保两个账号即使使用相同歌单名和存储键，也不会读取或覆盖对方数据。
+
+## 致谢
+
+- 感谢 [GD 音乐台](https://music.gdstudio.xyz/) 提供免费 API
+- 感谢 [Solara 原作者及贡献者](https://github.com/akudamatata/Solara) 开发并开放原项目
