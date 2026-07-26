@@ -873,8 +873,13 @@ const API = {
     },
 
     search: async (keyword, source = "all", count = 20, page = 1) => {
+        // JOOX 当前会忽略 pages 参数并在每一页返回完全相同的结果。
+        // 聚合搜索从第二页起跳过 JOOX，避免“加载更多”不断重复第一页。
+        if (source === "joox" && page > 1) {
+            return [];
+        }
         const requestedSources = source === "all"
-            ? ["joox", "kuwo", "netease", "bilibili"]
+            ? (page > 1 ? ["kuwo", "netease", "bilibili"] : ["joox", "kuwo", "netease", "bilibili"])
             : [source];
         const perSourceCount = source === "all" ? Math.max(10, Math.ceil(count / 2)) : Math.max(count, 30);
 
@@ -923,16 +928,24 @@ const API = {
             return score;
         };
 
-        const seen = new Set();
+        const seenIds = new Set();
+        const seenSongs = new Set();
+        const resultLimit = (source === "joox" || (source === "all" && page === 1))
+            ? Math.max(count, 30)
+            : count;
         return merged
+            .sort((left, right) => relevance(right) - relevance(left))
             .filter((song) => {
-                const key = getSongKey(song);
-                if (!key || seen.has(key)) return false;
-                seen.add(key);
+                const idKey = getSongKey(song);
+                const songKey = getSearchIdentityKey(song);
+                if ((idKey && seenIds.has(idKey)) || (songKey && seenSongs.has(songKey))) {
+                    return false;
+                }
+                if (idKey) seenIds.add(idKey);
+                if (songKey) seenSongs.add(songKey);
                 return true;
             })
-            .sort((left, right) => relevance(right) - relevance(left))
-            .slice(0, count);
+            .slice(0, resultLimit);
     },
 
     getRadarPlaylist: async (playlistId = "3778678", options = {}) => {
@@ -4437,7 +4450,7 @@ async function performSearch(isLiveSearch = false) {
             state.searchResults = [...state.searchResults, ...results];
         }
 
-        state.hasMoreResults = results.length === 20;
+        state.hasMoreResults = source !== "joox" && results.length > 0;
 
         // 显示搜索结果
         displaySearchResults(results, {
@@ -4488,19 +4501,24 @@ async function loadMoreResults() {
         state.searchSource = source;
         safeSetLocalStorage("searchSource", source);
         const results = await API.search(state.searchKeyword, source, 20, state.searchPage);
+        const uniqueResults = mergeUniqueSearchResults(state.searchResults, results);
 
-        if (results.length > 0) {
-            state.searchResults = [...state.searchResults, ...results];
-            state.hasMoreResults = results.length === 20;
-            displaySearchResults(results, {
+        if (uniqueResults.length > 0) {
+            state.searchResults = [...state.searchResults, ...uniqueResults];
+            state.hasMoreResults = results.length > 0 && source !== "joox";
+            displaySearchResults(uniqueResults, {
                 totalCount: state.searchResults.length,
             });
             persistLastSearchState();
-            debugLog(`加载完成: 新增 ${results.length} 个结果`);
+            debugLog(`加载完成: 接口返回 ${results.length} 个，去重后新增 ${uniqueResults.length} 个结果`);
         } else {
             state.hasMoreResults = false;
             showNotification("没有更多结果了");
-            debugLog("没有更多结果");
+            persistLastSearchState();
+            displaySearchResults([], {
+                totalCount: state.searchResults.length,
+            });
+            debugLog(results.length > 0 ? "下一页均为重复结果" : "没有更多结果");
         }
     } catch (error) {
         console.error("加载更多失败:", error);
@@ -5066,6 +5084,49 @@ function getSongKey(song) {
         artistText = artistValue.trim().toLowerCase();
     }
     return `${source}:${name}::${artistText}`;
+}
+
+function normalizeSearchIdentityText(value) {
+    return String(value || "")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+function getSearchIdentityKey(song) {
+    if (!song || typeof song !== "object") {
+        return null;
+    }
+    const name = normalizeSearchIdentityText(song.name);
+    const artistValue = song.artist ?? song.artists ?? song.singers ?? song.singer;
+    const artist = normalizeSearchIdentityText(
+        Array.isArray(artistValue)
+            ? artistValue.map((item) => typeof item === "string" ? item : (item?.name || "")).join(",")
+            : (artistValue && typeof artistValue === "object" ? artistValue.name : artistValue)
+    );
+    return name && artist ? `${name}::${artist}` : null;
+}
+
+function mergeUniqueSearchResults(existingItems, incomingItems) {
+    const seenIds = new Set();
+    const seenSongs = new Set();
+    const register = (song) => {
+        const idKey = getSongKey(song);
+        const songKey = getSearchIdentityKey(song);
+        if (idKey) seenIds.add(idKey);
+        if (songKey) seenSongs.add(songKey);
+    };
+    (Array.isArray(existingItems) ? existingItems : []).forEach(register);
+
+    return (Array.isArray(incomingItems) ? incomingItems : []).filter((song) => {
+        const idKey = getSongKey(song);
+        const songKey = getSearchIdentityKey(song);
+        if ((idKey && seenIds.has(idKey)) || (songKey && seenSongs.has(songKey))) {
+            return false;
+        }
+        register(song);
+        return true;
+    });
 }
 
 function sanitizeImportedSong(rawSong) {
