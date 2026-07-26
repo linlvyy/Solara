@@ -4165,6 +4165,9 @@ function setupInteractions() {
     // 修复：点击搜索区域外部时隐藏搜索结果
     document.addEventListener("click", (e) => {
         const searchArea = document.querySelector(".search-area");
+        if (e.target.closest?.(".modal-overlay")) {
+            return;
+        }
         if (searchArea && !searchArea.contains(e.target) && state.isSearchMode) {
             debugLog("点击搜索区域外部，隐藏搜索结果");
             hideSearchResults();

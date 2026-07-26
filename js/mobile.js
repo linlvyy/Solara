@@ -179,6 +179,9 @@
             if (target && typeof target.closest === "function" && target.closest(".quality-menu")) {
                 return;
             }
+            if (target && typeof target.closest === "function" && target.closest(".modal-overlay")) {
+                return;
+            }
 
             closeAllMobileOverlaysImpl();
         };
