@@ -59,6 +59,41 @@ html.desktop-view .playlist-action-btn:disabled {
     cursor: not-allowed;
 }
 
+html.desktop-view #playlist.playlist {
+    padding-top: 112px;
+}
+
+html.desktop-view #playlist .playlist-header {
+    align-items: flex-start;
+}
+
+html.desktop-view #playlist .playlist-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+}
+
+html.desktop-view #playlist .playlist-heading > .playlist-tabs {
+    width: max-content;
+    max-width: 100%;
+}
+
+html.desktop-view #playlist .named-playlist-controls {
+    min-width: 0;
+}
+
+html.desktop-view #playlist .named-playlist-select {
+    width: min(180px, 100%);
+    min-width: 0;
+}
+
+html.desktop-view #playlist .playlist-actions-tray {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    max-width: 112px;
+}
+
 /* ===== 桌面端：导入已选按钮 - 独立定位，不影响搜索栏布局 ===== */
 
 /* 默认隐藏，仅在搜索模式下显示 */

@@ -33,7 +33,7 @@ const dom = {
     importSelectedBtn: document.getElementById("importSelectedBtn"),
     importSelectedCount: document.getElementById("importSelectedCount"),
     importSelectedMenu: document.getElementById("importSelectedMenu"),
-    importToPlaylist: document.getElementById("importToPlaylist"),
+    importPlaylistTargets: document.getElementById("importPlaylistTargets"),
     importToFavorites: document.getElementById("importToFavorites"),
     importPlaylistBtn: document.getElementById("importPlaylistBtn"),
     exportPlaylistBtn: document.getElementById("exportPlaylistBtn"),
@@ -94,6 +94,14 @@ const dom = {
     mobileNewPlaylistBtn: document.getElementById("mobileNewPlaylistBtn"),
     mobileRenamePlaylistBtn: document.getElementById("mobileRenamePlaylistBtn"),
     mobileDeletePlaylistBtn: document.getElementById("mobileDeletePlaylistBtn"),
+    playlistTransferModal: document.getElementById("playlistTransferModal"),
+    playlistTransferTitle: document.getElementById("playlistTransferTitle"),
+    playlistTransferSongLabel: document.getElementById("playlistTransferSongLabel"),
+    playlistTransferSelect: document.getElementById("playlistTransferSelect"),
+    playlistTransferHint: document.getElementById("playlistTransferHint"),
+    closePlaylistTransferBtn: document.getElementById("closePlaylistTransferBtn"),
+    moveSongToPlaylistBtn: document.getElementById("moveSongToPlaylistBtn"),
+    copySongToPlaylistBtn: document.getElementById("copySongToPlaylistBtn"),
     accountStatus: document.getElementById("accountStatus"),
     logoutBtn: document.getElementById("logoutBtn"),
     logo: document.querySelector(".header h1"),
@@ -670,6 +678,7 @@ function buildAudioProxyUrl(url) {
 }
 
 const SOURCE_OPTIONS = [
+    { value: "all", label: "智能聚合（推荐）" },
     { value: "joox", label: "JOOX音乐" },
     { value: "bilibili", label: "哔哩哔哩" },
     { value: "kuwo", label: "酷我音乐" },
@@ -862,31 +871,67 @@ const API = {
         }
     },
 
-    search: async (keyword, source = "joox", count = 20, page = 1) => {
-        const signature = API.generateSignature();
-        const url = `${API.baseUrl}?types=search&source=${source}&name=${encodeURIComponent(keyword)}&count=${count}&pages=${page}&s=${signature}`;
+    search: async (keyword, source = "all", count = 20, page = 1) => {
+        const requestedSources = source === "all"
+            ? ["joox", "kuwo", "netease", "bilibili"]
+            : [source];
+        const perSourceCount = source === "all" ? Math.max(10, Math.ceil(count / 2)) : Math.max(count, 30);
 
-        try {
+        const requests = requestedSources.map(async (requestedSource) => {
+            const signature = API.generateSignature();
+            const url = `${API.baseUrl}?types=search&source=${requestedSource}&name=${encodeURIComponent(keyword)}&count=${perSourceCount}&pages=${page}&s=${signature}`;
             debugLog(`API请求: ${url}`);
             const data = await API.fetchJson(url);
-            debugLog(`API响应: ${JSON.stringify(data).substring(0, 200)}...`);
-
-            if (!Array.isArray(data)) throw new Error("搜索结果格式错误");
-
-            return data.map(song => ({
-                id: song.id,
+            if (!Array.isArray(data)) throw new Error(`${requestedSource} 搜索结果格式错误`);
+            return data.map((song) => ({
+                id: song.id || song.url_id,
                 name: song.name,
                 artist: song.artist,
                 album: song.album,
                 pic_id: song.pic_id,
-                url_id: song.url_id,
-                lyric_id: song.lyric_id,
-                source: song.source,
-            }));
-        } catch (error) {
-            debugLog(`API错误: ${error.message}`);
-            throw error;
+                url_id: song.url_id || song.id,
+                lyric_id: song.lyric_id || song.id,
+                source: song.source || requestedSource,
+            })).filter((song) => song.id && song.name);
+        });
+
+        const settled = await Promise.allSettled(requests);
+        const merged = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+        if (merged.length === 0 && settled.some((result) => result.status === "rejected")) {
+            const firstFailure = settled.find((result) => result.status === "rejected");
+            throw firstFailure.reason;
         }
+
+        const normalizedKeyword = String(keyword || "").trim().toLocaleLowerCase();
+        const compactKeyword = normalizedKeyword.replace(/[\s\p{P}\p{S}]+/gu, "");
+        const relevance = (song) => {
+            const name = String(song.name || "").toLocaleLowerCase();
+            const artist = (Array.isArray(song.artist) ? song.artist.join(" ") : String(song.artist || "")).toLocaleLowerCase();
+            const compactName = name.replace(/[\s\p{P}\p{S}]+/gu, "");
+            const compactArtist = artist.replace(/[\s\p{P}\p{S}]+/gu, "");
+            let score = 0;
+            const exactName = compactName === compactKeyword;
+            const exactArtist = compactArtist === compactKeyword;
+            if (exactName) score += 120;
+            if (exactArtist) score += 100;
+            if (compactName.startsWith(compactKeyword)) score += 70;
+            if (compactArtist.startsWith(compactKeyword)) score += 60;
+            if (!exactArtist && compactName.includes(compactKeyword)) score += 45;
+            if (compactArtist.includes(compactKeyword)) score += 40;
+            if (song.source === "joox") score += 4;
+            return score;
+        };
+
+        const seen = new Set();
+        return merged
+            .filter((song) => {
+                const key = getSongKey(song);
+                if (!key || seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .sort((left, right) => relevance(right) - relevance(left))
+            .slice(0, count);
     },
 
     getRadarPlaylist: async (playlistId = "3778678", options = {}) => {
@@ -944,17 +989,17 @@ const API = {
 
     getSongUrl: (song, quality = "320") => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=url&id=${song.id}&source=${song.source || "netease"}&br=${quality}&s=${signature}`;
+        return `${API.baseUrl}?types=url&id=${encodeURIComponent(song.url_id || song.id)}&source=${encodeURIComponent(song.source || "netease")}&br=${quality}&s=${signature}`;
     },
 
     getLyric: (song) => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=lyric&id=${song.lyric_id || song.id}&source=${song.source || "netease"}&s=${signature}`;
+        return `${API.baseUrl}?types=lyric&id=${encodeURIComponent(song.lyric_id || song.id)}&source=${encodeURIComponent(song.source || "netease")}&s=${signature}`;
     },
 
     getPicUrl: (song) => {
         const signature = API.generateSignature();
-        return `${API.baseUrl}?types=pic&id=${song.pic_id}&source=${song.source || "netease"}&size=300&s=${signature}`;
+        return `${API.baseUrl}?types=pic&id=${encodeURIComponent(song.pic_id)}&source=${encodeURIComponent(song.source || "netease")}&size=300&s=${signature}`;
     }
 };
 
@@ -999,6 +1044,9 @@ const state = {
     isSeeking: false,
     qualityMenuOpen: false,
     sourceMenuOpen: false,
+    isResolvingAudio: false,
+    audioPlaybackEstablished: false,
+    lastAudioRecoveryAt: 0,
     userScrolledLyrics: false, // 新增：用户是否手动滚动歌词
     lyricsScrollTimeout: null, // 新增：歌词滚动超时
     themeDefaultsCaptured: false,
@@ -1059,6 +1107,115 @@ function renderNamedPlaylistSelector() {
     }
     if (dom.mobileDeletePlaylistBtn) {
         dom.mobileDeletePlaylistBtn.disabled = state.namedPlaylists.length <= 1;
+    }
+    renderImportPlaylistTargets();
+}
+
+function renderImportPlaylistTargets() {
+    if (!dom.importPlaylistTargets) return;
+    dom.importPlaylistTargets.innerHTML = state.namedPlaylists.map((playlist) => `
+        <button class="import-dropdown-item" type="button" data-import-playlist-id="${escapeHtml(playlist.id)}">
+            <i class="fas fa-list-music" aria-hidden="true"></i>
+            ${escapeHtml(playlist.name)}
+        </button>
+    `).join("");
+}
+
+let pendingPlaylistTransfer = null;
+
+function closePlaylistTransferDialog() {
+    pendingPlaylistTransfer = null;
+    if (!dom.playlistTransferModal) return;
+    dom.playlistTransferModal.classList.remove("show");
+    dom.playlistTransferModal.setAttribute("aria-hidden", "true");
+}
+
+function openPlaylistTransferDialog({
+    songs,
+    sourcePlaylistId = null,
+    sourceIndex = null,
+    allowMove = false,
+    title = "加入播放列表",
+}) {
+    const validSongs = (Array.isArray(songs) ? songs : [songs]).filter((song) => song && typeof song === "object");
+    if (validSongs.length === 0 || !dom.playlistTransferModal || !dom.playlistTransferSelect) return;
+
+    const targets = state.namedPlaylists.filter((playlist) => playlist.id !== sourcePlaylistId);
+    if (targets.length === 0) {
+        showNotification("请先新建另一个歌单", "warning");
+        return;
+    }
+
+    pendingPlaylistTransfer = { songs: validSongs, sourcePlaylistId, sourceIndex, allowMove };
+    dom.playlistTransferTitle.textContent = title;
+    dom.playlistTransferSongLabel.textContent = validSongs.length === 1
+        ? `${validSongs[0].name} - ${Array.isArray(validSongs[0].artist) ? validSongs[0].artist.join(", ") : (validSongs[0].artist || "未知艺术家")}`
+        : `已选择 ${validSongs.length} 首歌曲`;
+    dom.playlistTransferSelect.innerHTML = targets.map((playlist) => `
+        <option value="${escapeHtml(playlist.id)}">${escapeHtml(playlist.name)} (${playlist.songs.length})</option>
+    `).join("");
+    dom.moveSongToPlaylistBtn.hidden = !allowMove;
+    dom.playlistTransferHint.textContent = allowMove
+        ? "“加入”会保留原歌曲；“移动”会从当前歌单移除。"
+        : "歌曲会加入所选歌单，不会影响其他歌单。";
+    dom.playlistTransferModal.classList.add("show");
+    dom.playlistTransferModal.setAttribute("aria-hidden", "false");
+    window.setTimeout(() => dom.playlistTransferSelect.focus(), 0);
+}
+
+function addSongsToNamedPlaylist(targetPlaylistId, songs) {
+    const target = state.namedPlaylists.find((playlist) => playlist.id === targetPlaylistId);
+    if (!target) return { added: 0, duplicates: 0 };
+
+    syncActiveNamedPlaylistFromQueue();
+    const targetSongs = target.id === state.activeNamedPlaylistId ? state.playlistSongs : target.songs;
+    const existingKeys = new Set(targetSongs.map(getSongKey).filter(Boolean));
+    let added = 0;
+    let duplicates = 0;
+
+    songs.forEach((song) => {
+        const normalized = sanitizeImportedSong(song) || { ...song };
+        const key = getSongKey(normalized);
+        if (key && existingKeys.has(key)) {
+            duplicates++;
+            return;
+        }
+        targetSongs.push(normalized);
+        if (key) existingKeys.add(key);
+        added++;
+    });
+
+    if (target.id !== state.activeNamedPlaylistId) {
+        target.songs = targetSongs;
+        saveNamedPlaylists();
+    } else {
+        renderPlaylist();
+    }
+    renderNamedPlaylistSelector();
+    return { added, duplicates };
+}
+
+function confirmPlaylistTransfer(moveSong = false) {
+    const transfer = pendingPlaylistTransfer;
+    const targetPlaylistId = dom.playlistTransferSelect?.value;
+    if (!transfer || !targetPlaylistId) return;
+
+    const target = state.namedPlaylists.find((playlist) => playlist.id === targetPlaylistId);
+    const { added, duplicates } = addSongsToNamedPlaylist(targetPlaylistId, transfer.songs);
+
+    if (moveSong && transfer.allowMove && Number.isInteger(transfer.sourceIndex)) {
+        removeFromPlaylist(transfer.sourceIndex, { silent: true });
+    }
+
+    closePlaylistTransferDialog();
+    const targetName = target?.name || "目标歌单";
+    if (moveSong && transfer.allowMove) {
+        showNotification(`已移动到「${targetName}」`, "success");
+    } else if (added > 0) {
+        const duplicateHint = duplicates > 0 ? `，${duplicates} 首已存在` : "";
+        showNotification(`已加入「${targetName}」${duplicateHint}`, "success");
+    } else {
+        showNotification(`「${targetName}」已包含所选歌曲`, "warning");
     }
 }
 
@@ -3040,9 +3197,18 @@ async function togglePlayPause() {
     if (dom.audioPlayer.paused) {
         const playPromise = dom.audioPlayer.play();
         if (playPromise !== undefined) {
-            playPromise.catch(error => {
+            playPromise.catch(async error => {
                 console.error("播放失败:", error);
-                showNotification("播放失败，请检查网络连接", "error");
+                try {
+                    await playSong(state.currentSong, {
+                        autoplay: true,
+                        startTime: state.currentPlaybackTime || 0,
+                        preserveProgress: true,
+                        isRetry: true,
+                    });
+                } catch (retryError) {
+                    showNotification("播放失败，请检查网络连接", "error");
+                }
             });
         }
     } else {
@@ -3547,6 +3713,19 @@ function setupInteractions() {
                 if (song) {
                     toggleFavorite(song);
                 }
+            } else if (action === "move") {
+                event.preventDefault();
+                event.stopPropagation();
+                const song = state.playlistSongs[index];
+                if (song) {
+                    openPlaylistTransferDialog({
+                        songs: [song],
+                        sourcePlaylistId: state.activeNamedPlaylistId,
+                        sourceIndex: index,
+                        allowMove: true,
+                        title: "管理歌曲所在歌单",
+                    });
+                }
             } else if (action === "download") {
                 event.preventDefault();
                 event.stopPropagation();
@@ -3626,13 +3805,7 @@ function setupInteractions() {
                 if (!song) {
                     return;
                 }
-                const added = addSongToPlaylist(song);
-                if (added) {
-                    renderPlaylist();
-                    showNotification("已添加到播放列表", "success");
-                } else {
-                    showNotification("播放列表已包含该歌曲", "warning");
-                }
+                openPlaylistTransferDialog({ songs: [song], title: "把收藏加入歌单" });
             } else if (action === "download") {
                 event.preventDefault();
                 event.stopPropagation();
@@ -3745,8 +3918,32 @@ function setupInteractions() {
     dom.audioPlayer.addEventListener("timeupdate", handleTimeUpdate);
     dom.audioPlayer.addEventListener("loadedmetadata", handleLoadedMetadata);
     dom.audioPlayer.addEventListener("play", updatePlayPauseButton);
+    dom.audioPlayer.addEventListener("playing", () => {
+        state.audioPlaybackEstablished = true;
+    });
     dom.audioPlayer.addEventListener("pause", updatePlayPauseButton);
     dom.audioPlayer.addEventListener("volumechange", onAudioVolumeChange);
+    dom.audioPlayer.addEventListener("error", async () => {
+        if (!state.currentSong || state.isResolvingAudio || !state.audioPlaybackEstablished) return;
+        const now = Date.now();
+        if (now - state.lastAudioRecoveryAt < 10000) return;
+        state.lastAudioRecoveryAt = now;
+        const resumeAt = Number.isFinite(dom.audioPlayer.currentTime)
+            ? dom.audioPlayer.currentTime
+            : (state.currentPlaybackTime || 0);
+        showNotification("播放地址已失效，正在自动刷新…", "warning");
+        try {
+            await playSong(state.currentSong, {
+                autoplay: true,
+                startTime: resumeAt,
+                preserveProgress: true,
+                isRetry: true,
+            });
+        } catch (error) {
+            console.error("自动刷新播放地址失败:", error);
+            showNotification("该音源当前不可播放，请换一个搜索结果", "error");
+        }
+    });
 
     dom.progressBar.addEventListener("input", handleProgressInput);
     dom.progressBar.addEventListener("change", handleProgressChange);
@@ -3894,11 +4091,13 @@ function setupInteractions() {
         });
     }
 
-    if (dom.importToPlaylist) {
-        dom.importToPlaylist.addEventListener("click", (event) => {
+    if (dom.importPlaylistTargets) {
+        dom.importPlaylistTargets.addEventListener("click", (event) => {
+            const target = event.target.closest("[data-import-playlist-id]");
+            if (!target) return;
             event.preventDefault();
             closeImportSelectedMenu();
-            importSelectedSearchResults("playlist");
+            importSelectedSearchResults("playlist", target.dataset.importPlaylistId);
         });
     }
 
@@ -4369,6 +4568,17 @@ function createSearchResultItem(song, index) {
         playSearchResult(index);
     });
 
+    const addButton = document.createElement("button");
+    addButton.className = "action-btn add-to-playlist";
+    addButton.type = "button";
+    addButton.title = "加入指定歌单";
+    addButton.setAttribute("aria-label", "加入指定歌单");
+    addButton.innerHTML = '<i class="fas fa-folder-plus"></i>';
+    addButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openPlaylistTransferDialog({ songs: [song], title: "加入指定歌单" });
+    });
+
     const downloadButton = document.createElement("button");
     downloadButton.className = "action-btn download";
     downloadButton.type = "button";
@@ -4381,6 +4591,7 @@ function createSearchResultItem(song, index) {
 
     actions.appendChild(favoriteButton);
     actions.appendChild(playButton);
+    actions.appendChild(addButton);
     actions.appendChild(downloadButton);
 
     item.appendChild(selectionToggle);
@@ -4513,7 +4724,7 @@ function openImportSelectedMenu() {
     });
 }
 
-function importSelectedSearchResults(target = "playlist") {
+function importSelectedSearchResults(target = "playlist", targetPlaylistId = state.activeNamedPlaylistId) {
     ensureSelectedSearchResultsSet();
     if (state.selectedSearchResults.size === 0) {
         return;
@@ -4578,39 +4789,15 @@ function importSelectedSearchResults(target = "playlist") {
         return;
     }
 
-    if (!Array.isArray(state.playlistSongs)) {
-        state.playlistSongs = [];
-    }
-
-    const existingKeys = new Set(
-        state.playlistSongs
-            .map(getSongKey)
-            .filter((key) => typeof key === "string" && key !== "")
-    );
-
-    let added = 0;
-    let duplicates = 0;
-
-    songsToAdd.forEach((song) => {
-        const key = getSongKey(song);
-        if (key && existingKeys.has(key)) {
-            duplicates++;
-            return;
-        }
-        state.playlistSongs.push(song);
-        if (key) {
-            existingKeys.add(key);
-        }
-        added++;
-    });
-
+    const targetPlaylist = state.namedPlaylists.find((playlist) => playlist.id === targetPlaylistId);
+    const { added, duplicates } = addSongsToNamedPlaylist(targetPlaylistId, songsToAdd);
+    const targetName = targetPlaylist?.name || "目标歌单";
     if (added > 0) {
-        renderPlaylist();
         const duplicateHint = duplicates > 0 ? `，${duplicates} 首已存在` : "";
-        showNotification(`成功导入 ${added} 首歌曲${duplicateHint}`, "success");
+        showNotification(`已导入 ${added} 首到「${targetName}」${duplicateHint}`, "success");
     } else {
         updatePlaylistActionStates();
-        showNotification("选中的歌曲已在播放列表中", "warning");
+        showNotification(`「${targetName}」已包含所选歌曲`, "warning");
     }
     updateFavoriteIcons();
 }
@@ -5125,6 +5312,9 @@ function renderPlaylist() {
             <button class="playlist-item-favorite favorite-toggle" type="button" data-playlist-action="favorite" data-index="${index}" data-favorite-key="${songKey}" title="收藏" aria-label="收藏">
                 <i class="fa-regular fa-heart"></i>
             </button>
+            <button class="playlist-item-move" type="button" data-playlist-action="move" data-index="${index}" title="移动或加入其他歌单" aria-label="移动或加入其他歌单">
+                <i class="fas fa-folder-tree"></i>
+            </button>
             <button class="playlist-item-download" type="button" data-playlist-action="download" data-index="${index}" title="下载">
                 <i class="fas fa-download"></i>
             </button>
@@ -5249,7 +5439,8 @@ function switchLibraryTab(target) {
 }
 
 // 新增：从播放列表移除歌曲
-function removeFromPlaylist(index) {
+function removeFromPlaylist(index, options = {}) {
+    const { silent = false } = options;
     if (index < 0 || index >= state.playlistSongs.length) return;
 
     const removingCurrent = state.currentPlaylist === "playlist" && state.currentTrackIndex === index;
@@ -5312,7 +5503,9 @@ function removeFromPlaylist(index) {
 
     updatePlaylistActionStates();
     savePlayerState();
-    showNotification("已从播放列表移除", "success");
+    if (!silent) {
+        showNotification("已从播放列表移除", "success");
+    }
     clearLyricsIfLibraryEmpty();
 }
 
@@ -5841,6 +6034,8 @@ function waitForAudioReady(player) {
 async function playSong(song, options = {}) {
     const { autoplay = true, startTime = 0, preserveProgress = false, isRetry = false } = options;
     if (!song) return;
+    state.isResolvingAudio = true;
+    state.audioPlaybackEstablished = false;
 
     window.clearTimeout(pendingPaletteTimer);
     state.audioReadyForPalette = false;
@@ -5987,10 +6182,11 @@ async function playSong(song, options = {}) {
         console.error('播放歌曲失败:', error);
         if (!isRetry) {
             debugLog('播放歌曲失败，尝试刷新缓存重试...', error);
-            return playSong(song, { ...options, isRetry: true });
+            return await playSong(song, { ...options, isRetry: true });
         }
         throw error;
     } finally {
+        state.isResolvingAudio = false;
         savePlayerState();
     }
 }
@@ -6813,6 +7009,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (dom.mobileLogoutBtn) {
         dom.mobileLogoutBtn.addEventListener("click", logoutCurrentAccount);
+    }
+    if (dom.closePlaylistTransferBtn) {
+        dom.closePlaylistTransferBtn.addEventListener("click", closePlaylistTransferDialog);
+    }
+    if (dom.copySongToPlaylistBtn) {
+        dom.copySongToPlaylistBtn.addEventListener("click", () => confirmPlaylistTransfer(false));
+    }
+    if (dom.moveSongToPlaylistBtn) {
+        dom.moveSongToPlaylistBtn.addEventListener("click", () => confirmPlaylistTransfer(true));
+    }
+    if (dom.playlistTransferModal) {
+        dom.playlistTransferModal.addEventListener("click", (event) => {
+            if (event.target === dom.playlistTransferModal) closePlaylistTransferDialog();
+        });
     }
     if (!remoteSyncEnabled) {
         initSettings();

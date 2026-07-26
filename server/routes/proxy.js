@@ -90,7 +90,8 @@ async function proxyKuwoAudio(targetUrl, req, res) {
 async function proxyApiRequest(reqUrl, req, res) {
   const cacheKey = buildCacheKey(reqUrl);
   const parsedReq = new URL(reqUrl);
-  const bypassCache = parsedReq.searchParams.get('nocache') === 'true';
+  const requestType = parsedReq.searchParams.get('types');
+  const bypassCache = parsedReq.searchParams.get('nocache') === 'true' || requestType === 'url';
 
   // ── Cache HIT ──────────────────────────────────────────────────────────────
   if (!bypassCache) {
@@ -161,7 +162,7 @@ async function proxyApiRequest(reqUrl, req, res) {
   }
 
   // ── 判断是否缓存（与 Cloudflare 版本逻辑完全一致） ──────────────────────────
-  const isSearch = parsedReq.searchParams.get('types') === 'search';
+  const isSearch = requestType === 'search';
   const isEmptyResult = responseText.trim() === '[]';
   const isError = responseText.includes('"error"') || responseText.includes('"status":0');
 

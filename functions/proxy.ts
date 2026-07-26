@@ -100,7 +100,8 @@ async function proxyApiRequest(
     headers: request.headers,
   });
 
-  const bypassCache = url.searchParams.get("nocache") === "true";
+  const requestType = url.searchParams.get("types");
+  const bypassCache = url.searchParams.get("nocache") === "true" || requestType === "url";
   if (request.method === "GET" && !bypassCache) {
     try {
       const cachedResponse = await cache.match(cacheKey);
@@ -139,13 +140,15 @@ async function proxyApiRequest(
   headers.set("X-Cache-Status", "MISS");
   headers.set("Access-Control-Expose-Headers", "X-Cache-Status");
 
-  const isSearch = url.searchParams.get("types") === "search";
+  const isSearch = requestType === "search";
+  const isTemporaryAudioUrl = requestType === "url";
   const isEmptyResult = responseText.trim() === "[]";
   const isError = responseText.includes('"error"') || responseText.includes('"status":0');
   const shouldCache = upstream.status === 200
     && request.method === "GET"
     && !isError
     && !bypassCache
+    && !isTemporaryAudioUrl
     && !(isSearch && isEmptyResult);
 
   headers.set(

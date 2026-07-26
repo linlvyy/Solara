@@ -842,6 +842,7 @@ body.mobile-view .playlist-items .playlist-item:hover {
 }
 
 body.mobile-view .playlist-items .playlist-item .playlist-item-favorite,
+body.mobile-view .playlist-items .playlist-item .playlist-item-move,
 body.mobile-view .playlist-items .playlist-item .playlist-item-download,
 body.mobile-view .playlist-items .playlist-item .playlist-item-remove {
     width: 28px;
@@ -850,6 +851,10 @@ body.mobile-view .playlist-items .playlist-item .playlist-item-remove {
 }
 
 body.mobile-view .playlist-items .playlist-item .playlist-item-favorite {
+    right: 128px;
+}
+
+body.mobile-view .playlist-items .playlist-item .playlist-item-move {
     right: 88px;
 }
 
