@@ -4,9 +4,7 @@
 
 本项目保留原作者署名，并继续采用上游声明的 CC BY-NC-SA 协议：仅限非商业使用，修改版本也须以相同协议公开。
 
-## 在线体验
-
-<https://solara.telef10.eu.org>
+## 界面预览
 
 ![Solara 界面预览](Preview.gif)
 
