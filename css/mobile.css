@@ -556,7 +556,6 @@ body.mobile-view .mobile-overlay-scrim {
     z-index: 40;
 }
 
-body.mobile-view.mobile-search-open .mobile-overlay-scrim,
 body.mobile-view.mobile-panel-open .mobile-overlay-scrim {
     opacity: 1;
 }
@@ -804,9 +803,9 @@ body.mobile-view .search-area {
     inset: 0;
     width: 100%;
     height: 100%;
-    background: rgba(8, 10, 16, 0.85);
-    backdrop-filter: blur(40px) saturate(180%);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    background: linear-gradient(180deg, #151925 0%, #090c14 100%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     transform: translateY(-100%);
     transition: transform 0.5s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.4s ease;
     z-index: 160;
@@ -832,8 +831,9 @@ body.mobile-view .search-controls-wrapper {
     display: flex;
     flex-direction: column;
     padding: 12px;
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #111622;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
     border-radius: 20px;
     position: sticky;
     top: 0;
@@ -864,8 +864,8 @@ body.mobile-view .search-bar-unified {
     display: flex;
     align-items: center;
     width: 100%;
-    background: rgba(255, 255, 255, 0.08); 
-    border: 1.5px solid rgba(29, 185, 84, 0.4); 
+    background: #1b2130;
+    border: 1.5px solid rgba(29, 185, 84, 0.62);
     border-radius: 14px;
     padding: 2px;
     margin-bottom: 12px;
@@ -908,8 +908,8 @@ body.mobile-view .search-input::placeholder {
 }
 
 body.mobile-view .source-select-btn {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #252c3d;
+    border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 12px;
     color: #ffffff;
     padding: 8px 12px;
@@ -955,7 +955,8 @@ body.mobile-view .search-results {
     margin-top: 0;
     position: relative;
     scrollbar-width: none;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #0d111b;
+    border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 20px;
 }
 

@@ -66,8 +66,8 @@ export function validateCredentials(username: string, password: string): string 
     return "用户名需为 3–24 位小写字母、数字或下划线";
   }
   const passwordLength = Array.from(password).length;
-  if (passwordLength < 10 || passwordLength > 128) {
-    return "密码长度需为 10–128 个字符";
+  if (passwordLength < 4 || passwordLength > 128) {
+    return "密码长度需为 4–128 个字符";
   }
   return null;
 }

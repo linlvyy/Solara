@@ -148,7 +148,8 @@ function syncMobileOverlayVisibility() {
         dom.searchArea.setAttribute("aria-hidden", searchOpen ? "false" : "true");
     }
     if (dom.mobileOverlayScrim) {
-        dom.mobileOverlayScrim.setAttribute("aria-hidden", (searchOpen || panelOpen) ? "false" : "true");
+        // 搜索页本身已经是全屏界面，不需要再叠加一层灰色遮罩。
+        dom.mobileOverlayScrim.setAttribute("aria-hidden", panelOpen ? "false" : "true");
     }
 }
 
@@ -780,6 +781,10 @@ const savedLastSearchState = (() => {
     return sanitizeStoredSearchState(parsed, savedSearchSource || SOURCE_OPTIONS[0].value);
 })();
 
+const savedSearchStateMatchesSource = Boolean(
+    savedLastSearchState && savedLastSearchState.source === savedSearchSource
+);
+
 let lastSearchStateCache = savedLastSearchState
     ? { ...savedLastSearchState, results: cloneSearchResults(savedLastSearchState.results) }
     : null;
@@ -955,17 +960,19 @@ Object.freeze(API);
 
 const state = {
     onlineSongs: [],
-    searchResults: cloneSearchResults(savedLastSearchState?.results) || [],
+    searchResults: savedSearchStateMatchesSource
+        ? cloneSearchResults(savedLastSearchState.results)
+        : [],
     renderedSearchCount: 0,
     currentTrackIndex: savedCurrentTrackIndex,
     currentAudioUrl: null,
     lyricsData: [],
     currentLyricLine: -1,
     currentPlaylist: savedCurrentPlaylist, // 'online', 'search', or 'playlist'
-    searchPage: savedLastSearchState?.page || 1,
-    searchKeyword: savedLastSearchState?.keyword || "", // 确保这里有初始值
-    searchSource: savedLastSearchState ? savedLastSearchState.source : savedSearchSource,
-    hasMoreResults: typeof savedLastSearchState?.hasMore === "boolean" ? savedLastSearchState.hasMore : true,
+    searchPage: savedSearchStateMatchesSource ? savedLastSearchState.page : 1,
+    searchKeyword: savedSearchStateMatchesSource ? savedLastSearchState.keyword : "",
+    searchSource: savedSearchSource,
+    hasMoreResults: savedSearchStateMatchesSource ? savedLastSearchState.hasMore : true,
     currentSong: savedCurrentSong,
     currentArtworkUrl: null,
     debugMode: false,
@@ -2629,13 +2636,21 @@ function persistLastSearchState() {
     safeSetLocalStorage(LAST_SEARCH_STATE_STORAGE_KEY, JSON.stringify(snapshot));
 }
 
-function restoreStateFromSnapshot(snapshot) {
+function restoreStateFromSnapshot(snapshot, options = {}) {
+    const { preserveSelectedSource = true } = options;
     const sanitized = sanitizeStoredSearchState(snapshot, state.searchSource || SOURCE_OPTIONS[0].value);
     if (!sanitized || !sanitized.keyword) {
         return false;
     }
+
+    const selectedSource = normalizeSource(state.searchSource);
+    if (preserveSelectedSource && sanitized.source !== selectedSource) {
+        lastSearchStateCache = { ...sanitized, results: cloneSearchResults(sanitized.results) };
+        return false;
+    }
+
     state.searchKeyword = sanitized.keyword;
-    state.searchSource = sanitized.source;
+    state.searchSource = preserveSelectedSource ? selectedSource : sanitized.source;
     state.searchPage = sanitized.page;
     state.hasMoreResults = sanitized.hasMore;
     state.searchResults = cloneSearchResults(sanitized.results);
@@ -3152,6 +3167,19 @@ function selectSearchSource(source) {
     updateSourceLabel();
     buildSourceMenu();
     closeSourceMenu();
+
+    // 搜索快照属于它产生时的音源。切换音源后先清掉旧结果，
+    // 避免输入框再次聚焦时用旧快照把当前选择覆盖回去。
+    state.searchKeyword = "";
+    state.searchPage = 1;
+    state.searchResults = [];
+    state.hasMoreResults = true;
+    state.renderedSearchCount = 0;
+    resetSelectedSearchResults();
+    const listContainer = dom.searchResultsList || dom.searchResults;
+    if (listContainer) {
+        listContainer.innerHTML = "";
+    }
 }
 
 function buildQualityMenu() {

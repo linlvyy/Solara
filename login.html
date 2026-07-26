@@ -538,8 +538,8 @@
           <label for="password" class="field-label">访问口令</label>
           <div class="input-wrapper">
             <i class="fa-solid fa-lock" aria-hidden="true"></i>
-            <input type="password" id="password" placeholder="至少 10 个字符" autocomplete="current-password"
-              minlength="10" maxlength="128" required>
+            <input type="password" id="password" placeholder="至少 4 个字符" autocomplete="current-password"
+              minlength="4" maxlength="128" required>
           </div>
         </div>
         <div class="field" id="confirm-field" hidden>
@@ -547,7 +547,7 @@
           <div class="input-wrapper">
             <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
             <input type="password" id="confirm-password" placeholder="再次输入密码"
-              autocomplete="new-password" minlength="10" maxlength="128">
+              autocomplete="new-password" minlength="4" maxlength="128">
           </div>
         </div>
         <p class="login-hint" id="auth-hint">使用你的用户名和密码登录；会话将在 30 天后过期。</p>
@@ -606,7 +606,7 @@
       if (submitButton) submitButton.textContent = registering ? "注册并进入" : "进入 Solara Open";
       if (authHint) {
         authHint.textContent = registering
-          ? "用户名注册后不可更改；请妥善保存密码，当前不提供找回功能。"
+          ? "密码至少 4 个字符，不限数字或字母；当前不提供找回功能。"
           : "使用你的用户名和密码登录；会话将在 30 天后过期。";
       }
     };
@@ -627,6 +627,10 @@
       const username = usernameInput instanceof HTMLInputElement ? usernameInput.value.trim().toLowerCase() : "";
       const password = pwdInput instanceof HTMLInputElement ? pwdInput.value : "";
       const confirmation = confirmInput instanceof HTMLInputElement ? confirmInput.value : "";
+      if (Array.from(password).length < 4) {
+        showNotification("密码至少需要 4 个字符", "error");
+        return;
+      }
       if (authMode === "register" && password !== confirmation) {
         showNotification("两次输入的密码不一致", "error");
         return;
@@ -639,16 +643,19 @@
           credentials: "include",
           body: JSON.stringify({ username, password }),
         });
-        const data = await response.json().catch(() => ({}));
+        const data = await response.json().catch(() => null);
         if (response.ok) {
           localStorage.clear();
           window.location.replace("/");
           return;
         }
-        showNotification(data.error || "操作失败，请重试", "error");
+        const message = data && typeof data.error === "string"
+          ? data.error
+          : `操作失败（服务器返回 ${response.status}）`;
+        showNotification(message, "error");
       } catch (error) {
         console.error(error);
-        showNotification("登录出错，请稍后再试", "error");
+        showNotification("无法连接服务器，请检查网络后重试", "error");
       } finally {
         if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
       }
