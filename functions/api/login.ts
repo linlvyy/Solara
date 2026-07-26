@@ -38,7 +38,12 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const validationError = validateCredentials(username, password);
   if (validationError) return json({ error: "用户名或密码错误" }, 401);
 
-  await ensureAuthTables(env.DB);
+  try {
+    await ensureAuthTables(env.DB);
+  } catch (error) {
+    console.error("Failed to initialize auth tables", error);
+    return json({ error: "账号数据库初始化失败，请稍后再试" }, 500);
+  }
   const limiterKey = await attemptKey(request, username);
   if (await isLoginBlocked(env.DB, limiterKey)) {
     return json({ error: "尝试次数过多，请 10 分钟后再试" }, 429);

@@ -37,7 +37,12 @@ export async function onRequestPost({ request, env }: { request: Request; env: E
   const validationError = validateCredentials(username, password);
   if (validationError) return json({ error: validationError }, 400);
 
-  await ensureAuthTables(env.DB);
+  try {
+    await ensureAuthTables(env.DB);
+  } catch (error) {
+    console.error("Failed to initialize auth tables", error);
+    return json({ error: "账号数据库初始化失败，请稍后再试" }, 500);
+  }
   const registrationKey = await attemptKey(request, "__registration__");
   if (await isLoginBlocked(env.DB, registrationKey)) {
     return json({ error: "该网络注册过于频繁，请稍后再试" }, 429);

@@ -78,6 +78,9 @@ export function isSameOriginRequest(request: Request): boolean {
 }
 
 export async function ensureAuthTables(db: D1Database): Promise<void> {
+  // D1 会在执行 batch 前准备其中的全部语句。首次部署时如果把
+  // CREATE TABLE 与依赖该表的 CREATE INDEX 放在同一批，线上环境
+  // 可能在表尚不存在时准备索引并直接抛出 1101。
   await db.batch([
     db.prepare(
       `CREATE TABLE IF NOT EXISTS users (
@@ -107,6 +110,8 @@ export async function ensureAuthTables(db: D1Database): Promise<void> {
         updated_at INTEGER NOT NULL
       )`,
     ),
+  ]);
+  await db.batch([
     db.prepare("CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at)"),
   ]);
