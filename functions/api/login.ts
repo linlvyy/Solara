@@ -1,43 +1,77 @@
-const MAX_AGE_SECONDS = 48 * 60 * 60;
+import {
+  attemptKey,
+  clearLoginFailures,
+  createSession,
+  ensureAuthTables,
+  isLoginBlocked,
+  isSameOriginRequest,
+  normalizeUsername,
+  recordLoginFailure,
+  sessionCookie,
+  validateCredentials,
+  verifyPassword,
+} from "../lib/auth";
 
-export async function onRequestPost(context: any) {
-  const { request, env } = context;
-  const passwordEnv = env.PASSWORD;
-  const url = new URL(request.url);
+type Env = {
+  DB?: D1Database;
+};
 
-  const body = await request.json().catch(() => ({ password: "" }));
-  const providedPassword = typeof body.password === "string" ? body.password : "";
+const JSON_HEADERS = {
+  "Content-Type": "application/json; charset=utf-8",
+  "Cache-Control": "no-store",
+};
 
-  if (typeof passwordEnv !== "string") {
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  if (providedPassword === passwordEnv) {
-    const cookieSegments = [
-      `auth=${btoa(passwordEnv)}`,
-      `Max-Age=${MAX_AGE_SECONDS}`,
-      "Path=/",
-      "SameSite=Lax",
-      "HttpOnly",
-    ];
-    if (url.protocol === "https:") {
-      cookieSegments.push("Secure");
-    }
-
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Set-Cookie": cookieSegments.join("; "),
-      },
-    });
-  }
-
-  return new Response(JSON.stringify({ success: false }), {
-    status: 401,
-    headers: { "Content-Type": "application/json" },
+function json(body: unknown, status = 200, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...JSON_HEADERS, ...headers },
   });
+}
+
+export async function onRequestPost({ request, env }: { request: Request; env: Env }): Promise<Response> {
+  if (!isSameOriginRequest(request)) return json({ error: "请求来源无效" }, 403);
+  if (!env.DB) return json({ error: "账号数据库尚未配置" }, 503);
+
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const username = normalizeUsername(body.username);
+  const password = typeof body.password === "string" ? body.password : "";
+  const validationError = validateCredentials(username, password);
+  if (validationError) return json({ error: "用户名或密码错误" }, 401);
+
+  await ensureAuthTables(env.DB);
+  const limiterKey = await attemptKey(request, username);
+  if (await isLoginBlocked(env.DB, limiterKey)) {
+    return json({ error: "尝试次数过多，请 10 分钟后再试" }, 429);
+  }
+
+  const user = await env.DB.prepare(
+    `SELECT id, username, display_name AS displayName, password_hash AS passwordHash,
+            password_salt AS passwordSalt, password_iterations AS passwordIterations
+     FROM users WHERE username = ?`,
+  ).bind(username).first<{
+    id: string;
+    username: string;
+    displayName: string;
+    passwordHash: string;
+    passwordSalt: string;
+    passwordIterations: number;
+  }>();
+
+  const validPassword = await verifyPassword(
+    password,
+    user?.passwordHash || "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    user?.passwordSalt || "AAAAAAAAAAAAAAAAAAAAAA",
+    user?.passwordIterations || 210_000,
+  );
+  if (!user || !validPassword) {
+    await recordLoginFailure(env.DB, limiterKey);
+    return json({ error: "用户名或密码错误" }, 401);
+  }
+
+  await clearLoginFailures(env.DB, limiterKey);
+  const token = await createSession(env.DB, user.id);
+  return json({
+    authenticated: true,
+    user: { id: user.id, username: user.username, displayName: user.displayName },
+  }, 200, { "Set-Cookie": sessionCookie(token, request) });
 }

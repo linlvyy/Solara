@@ -88,6 +88,7 @@ const dom = {
     deletePlaylistBtn: document.getElementById("deletePlaylistBtn"),
     accountBadge: document.getElementById("accountBadge"),
     accountStatus: document.getElementById("accountStatus"),
+    logoutBtn: document.getElementById("logoutBtn"),
     logo: document.querySelector(".header h1"),
 };
 
@@ -1123,17 +1124,41 @@ function deleteNamedPlaylist() {
 
 async function loadAccountIdentity() {
     try {
-        const response = await fetch("/api/me", { headers: { Accept: "application/json" } });
+        const response = await fetch("/api/me", {
+            credentials: "include",
+            headers: { Accept: "application/json" },
+        });
         const data = await response.json().catch(() => ({}));
-        const label = data.email || "未登录";
+        const label = data.displayName || data.username || "未登录";
         if (dom.accountBadge) dom.accountBadge.textContent = label;
         if (dom.accountStatus) {
             dom.accountStatus.textContent = data.authenticated
-                ? `当前账号：${label}`
-                : "尚未配置 Cloudflare Access；云端多账号同步暂不可用。";
+                ? `当前账号：${label} · 云端同步已启用`
+                : "登录状态已失效，请重新登录。";
         }
+        if (!data.authenticated) window.location.replace("/login");
     } catch {
         if (dom.accountStatus) dom.accountStatus.textContent = "无法确认账号状态。";
+    }
+}
+
+async function logoutCurrentAccount() {
+    if (dom.logoutBtn) dom.logoutBtn.disabled = true;
+    try {
+        await fetch("/api/logout", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+        });
+    } finally {
+        try {
+            localStorage.clear();
+            sessionStorage.clear();
+        } catch {
+            // Ignore browsers that disable storage.
+        }
+        window.location.replace("/login");
     }
 }
 
@@ -6765,6 +6790,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (dom.deletePlaylistBtn) {
         dom.deletePlaylistBtn.addEventListener("click", deleteNamedPlaylist);
+    }
+    if (dom.logoutBtn) {
+        dom.logoutBtn.addEventListener("click", logoutCurrentAccount);
     }
     if (!remoteSyncEnabled) {
         initSettings();

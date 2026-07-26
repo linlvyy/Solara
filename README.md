@@ -6,8 +6,10 @@
 
 ## 与原版的区别
 
-- Cloudflare Access 邮箱验证码登录，不保存用户密码
-- Cloudflare D1 按登录邮箱隔离数据
+- 免费的用户名/密码注册登录，不依赖 Cloudflare Zero Trust 付费授权
+- 密码使用 PBKDF2-SHA-256、独立随机盐和 210,000 次迭代后存储
+- HttpOnly、Secure、SameSite 会话 Cookie，30 天自动失效
+- Cloudflare D1 按内部用户 ID 隔离数据
 - 每个账号拥有独立收藏、播放记录和多个命名歌单
 - 可新建、切换、重命名、删除歌单
 - Audius：默认主音源，无密钥即可搜索和播放
@@ -30,15 +32,16 @@ Binding name: DB
 
 在 D1 控制台执行 [migrations/0001_user_store.sql](migrations/0001_user_store.sql)。
 
-### 2. 配置邮箱验证码登录
+### 2. 账号系统
 
-在 Cloudflare Zero Trust → Access → Applications 中给站点域名创建 Self-hosted Application：
+无需配置 Cloudflare Access。首次访问站点会跳转到 `/login`，用户可以自行注册：
 
-- 登录方式启用 One-time PIN
-- Allow Policy 可选择允许指定邮箱或指定邮箱域名
-- 如要邀请新用户，把其邮箱加入 Allow Policy
+- 用户名：3–24 位字母、数字或下划线，不区分大小写
+- 密码：10–128 个字符
+- 连续登录失败 5 次后，该用户名与来源 IP 的组合会暂时锁定 10 分钟
+- 当前版本不提供邮箱验证或密码找回，请用户自行妥善保管密码
 
-Pages Functions 会读取 Cloudflare Access 注入的 `cf-access-authenticated-user-email`，并以该邮箱作为 D1 数据所有者。没有身份请求头时，云同步 API 会返回 401，不会把不同访客的数据混在一起。
+服务端只保存加盐后的密码派生值，不保存明文密码。会话令牌仅通过 HttpOnly Cookie 传输，D1 中只保存令牌的 SHA-256 摘要。
 
 ### 3. 环境变量
 
@@ -54,8 +57,6 @@ GD_EXPERIMENTAL_ENABLED=true
 # 可选，仅在 GD_EXPERIMENTAL_ENABLED=true 时使用。
 API_BASE_URL=https://music-api.gdstudio.xyz/api.php
 ```
-
-不要在正式环境设置 `ALLOW_LOCAL_GUEST=true`，该选项只用于本地预览。
 
 ### 4. Pages 设置
 
@@ -79,14 +80,14 @@ Spotify、网易云、QQ 音乐等商业平台内容应使用其官方客户端�
 
 ## 本地开发
 
-安装 Wrangler 后运行 Pages 本地开发服务器，并将 `ALLOW_LOCAL_GUEST` 设为 `true`。本地访客会使用固定的预览身份；正式环境必须由 Cloudflare Access 提供邮箱身份。
+安装 Wrangler 后运行 Pages 本地开发服务器，并绑定本地 D1。通过登录页注册测试账号即可验证完整流程。
 
 ## 数据结构
 
-所有云端数据都存入 `user_store`：
+账号和会话分别存入 `users`、`sessions`，播放器数据存入 `user_store`：
 
 ```text
-(owner email, key) → JSON/string value
+(internal user id, key) → JSON/string value
 ```
 
-复合主键确保两个账号即使使用相同歌单名和存储键，也不会读取或覆盖对方数据。
+`user_store` 的复合主键确保两个账号即使使用相同歌单名和存储键，也不会读取或覆盖对方数据。

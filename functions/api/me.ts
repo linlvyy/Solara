@@ -1,21 +1,19 @@
+import { getSessionUser } from "../lib/auth";
+
 type Env = {
-  ALLOW_LOCAL_GUEST?: string;
+  DB?: D1Database;
 };
 
 export async function onRequest({ request, env }: { request: Request; env: Env }): Promise<Response> {
-  const email = request.headers.get("cf-access-authenticated-user-email")
-    || (env.ALLOW_LOCAL_GUEST === "true" ? "local-preview@solara.invalid" : "");
-
+  const user = env.DB ? await getSessionUser(request, env.DB) : null;
   return new Response(JSON.stringify({
-    authenticated: Boolean(email),
-    email: email || null,
-    authProvider: request.headers.has("cf-access-authenticated-user-email")
-      ? "cloudflare-access"
-      : email
-        ? "local-preview"
-        : null,
+    authenticated: Boolean(user),
+    user,
+    username: user?.username || null,
+    displayName: user?.displayName || null,
+    authProvider: user ? "solara-account" : null,
   }), {
-    status: email ? 200 : 401,
+    status: user ? 200 : 401,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",

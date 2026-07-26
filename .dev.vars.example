@@ -1,4 +1,3 @@
-ALLOW_LOCAL_GUEST=true
 JAMENDO_CLIENT_ID=
 GD_EXPERIMENTAL_ENABLED=true
 API_BASE_URL=https://music-api.gdstudio.xyz/api.php

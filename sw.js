@@ -1,5 +1,5 @@
-const CACHE_NAME = "solara-open-v1";
-const SHELL = ["/", "/index.html", "/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
+const CACHE_NAME = "solara-open-v2";
+const SHELL = ["/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)).catch(() => undefined));
@@ -15,7 +15,12 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.pathname.startsWith("/api/") || url.pathname.startsWith("/proxy")) return;
+  if (
+    event.request.method !== "GET"
+    || event.request.mode === "navigate"
+    || url.pathname.startsWith("/api/")
+    || url.pathname.startsWith("/proxy")
+  ) return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -26,4 +31,3 @@ self.addEventListener("fetch", (event) => {
       .catch(() => caches.match(event.request))
   );
 });
-

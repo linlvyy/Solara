@@ -1,6 +1,7 @@
+import type { SessionUser } from "../lib/auth";
+
 type Env = {
   DB?: D1Database;
-  ALLOW_LOCAL_GUEST?: string;
 };
 
 type JsonBody = {
@@ -17,13 +18,6 @@ const JSON_HEADERS = {
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
-}
-
-function getOwner(request: Request, env: Env): string | null {
-  const owner = request.headers.get("cf-access-authenticated-user-email");
-  if (owner) return owner.trim().toLowerCase().slice(0, 254);
-  if (env.ALLOW_LOCAL_GUEST === "true") return "local-preview@solara.invalid";
-  return null;
 }
 
 function hasD1(env: Env): env is Env & { DB: D1Database } {
@@ -96,10 +90,18 @@ async function handleDelete(request: Request, env: Env, owner: string): Promise<
   return json({ d1Available: true, authenticated: true, deleted: keys.length });
 }
 
-export async function onRequest({ request, env }: { request: Request; env: Env }): Promise<Response> {
+export async function onRequest({
+  request,
+  env,
+  data,
+}: {
+  request: Request;
+  env: Env;
+  data: { user?: SessionUser };
+}): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: JSON_HEADERS });
-  const owner = getOwner(request, env);
-  if (!owner) return json({ authenticated: false, error: "Cloudflare Access sign-in required" }, 401);
+  const owner = data?.user?.id || null;
+  if (!owner) return json({ authenticated: false, error: "请先登录" }, 401);
   if (request.method === "GET") return handleGet(request, env, owner);
   if (request.method === "POST") return handlePost(request, env, owner);
   if (request.method === "DELETE") return handleDelete(request, env, owner);
