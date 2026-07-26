@@ -4,9 +4,16 @@
 
 本项目保留原作者署名，并继续采用上游声明的 CC BY-NC-SA 协议：仅限非商业使用，修改版本也须以相同协议公开。
 
+## 在线体验
+
+<https://solara.telef10.eu.org>
+
+![Solara 界面预览](Preview.gif)
+
 ## 与上游版本的主要区别
 
-- 增加用户名/密码注册登录；密码以 PBKDF2-SHA-256 和独立随机盐派生后保存，会话使用 HttpOnly Cookie
+- 增加用户名/密码注册登录；服务器不会保存明文密码，每个密码都会加入独立生成的随机盐，再使用 PBKDF2-SHA-256 计算并保存校验值
+- 登录会话使用 HttpOnly、Secure、SameSite Cookie，默认 30 天后失效
 - 使用 Cloudflare D1 按内部用户 ID 隔离账号、收藏、播放记录和歌单数据
 - 每个账号可创建多个命名歌单，并可切换、重命名、删除以及在歌单间复制或移动歌曲
 - 搜索结果可直接选择目标歌单；试听使用独立的临时播放队列，不会自动写入用户歌单，也不会强制跳回播放器
@@ -20,17 +27,43 @@
 
 ## Cloudflare Pages 部署
 
-### 1. 创建 D1
+部署前需要一个 Cloudflare 账号和一份本仓库代码。可以先将仓库 Fork 到自己的 GitHub 账号，再按下面的步骤连接 Cloudflare Pages。
 
-在 Cloudflare 控制台创建 D1 数据库，例如 `solara-db`，然后在 Pages 项目中添加绑定：
+### 1. 创建 Pages 项目
 
-```text
-Binding name: DB
+1. 打开 Cloudflare 控制台，进入 **Workers 和 Pages**
+2. 选择 **创建应用程序 → Pages → 连接到 Git**
+3. 选择 Fork 后的 Solara 仓库
+4. 生产分支选择 `main`
+5. 构建命令留空，构建输出目录填写 `/`
+6. 保存并完成第一次部署
+
+### 2. 创建并绑定 D1
+
+1. 在 Cloudflare 控制台进入 **存储和数据库 → D1**
+2. 创建数据库，例如 `solara-db`
+3. 打开该数据库的控制台，执行 [migrations/0001_user_store.sql](migrations/0001_user_store.sql)
+4. 返回 Solara Pages 项目，进入 **设置 → 绑定**
+5. 添加 D1 数据库绑定，变量名称必须填写 `DB`，数据库选择刚创建的 `solara-db`
+
+### 3. 配置环境变量
+
+在 Pages 项目的 **设置 → 变量和机密** 中添加：
+
+```dotenv
+API_BASE_URL=https://music-api.gdstudio.xyz/api.php
+MAX_USERS=60
 ```
 
-在 D1 控制台执行 [migrations/0001_user_store.sql](migrations/0001_user_store.sql)。
+`MAX_USERS` 是允许注册的账号总数，可以自行修改。达到上限后只会停止新注册，已有账号不受影响。
 
-### 2. 账号系统
+### 4. 重新部署
+
+绑定 D1 并添加环境变量后，在 **部署** 页面重新部署最新版本。部署完成后打开 Cloudflare 提供的 `pages.dev` 地址即可使用，也可以在 **自定义域** 中绑定自己的域名。
+
+以后向 GitHub 仓库的 `main` 分支推送更新，Cloudflare Pages 会自动重新部署。
+
+## 账号系统
 
 无需配置 Cloudflare Access。首次访问站点会跳转到 `/login`，用户可以自行注册：
 
@@ -39,29 +72,7 @@ Binding name: DB
 - 连续登录失败 5 次后，该用户名与来源 IP 的组合会暂时锁定 10 分钟
 - 当前版本不提供邮箱验证或密码找回，请用户自行妥善保管密码
 
-服务端只保存加盐后的密码派生值，不保存明文密码。会话令牌仅通过 HttpOnly Cookie 传输，D1 中只保存令牌的 SHA-256 摘要。
-
-### 3. 音乐接口
-
-默认使用原版 Solara 的 GD 音乐台接口。账号注册上限默认是 60；需要调整时在 Cloudflare Pages 的环境变量中修改：
-
-```dotenv
-API_BASE_URL=https://music-api.gdstudio.xyz/api.php
-MAX_USERS=60
-```
-
-修改 `MAX_USERS` 后重新部署一次即可生效。达到上限只会停止新注册，已有账号不受影响。
-
-### 4. Pages 设置
-
-这是静态网站加 Pages Functions：
-
-```text
-Build command: 留空
-Build output directory: /
-```
-
-也可以直接连接 GitHub 仓库，每次推送自动部署。
+服务器不会保存明文密码，只保存用于验证登录的加盐计算结果。会话令牌仅通过 HttpOnly Cookie 传输，D1 中只保存令牌的 SHA-256 摘要。
 
 ## 音乐与下载
 
