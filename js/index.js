@@ -6756,50 +6756,25 @@ function scrollToCurrentLyric(element, containerOverride) {
 async function downloadSong(song, quality = "320") {
     if (!song) return;
     try {
-        showNotification("正在准备下载...");
+        const artist = Array.isArray(song.artist) ? song.artist.join(", ") : (song.artist || "未知艺术家");
+        const params = new URLSearchParams({
+            id: String(song.url_id || song.id || ""),
+            source: String(song.source || "netease"),
+            br: String(quality),
+            pic_id: String(song.pic_id || song.id || ""),
+            title: String(song.name || "未知歌曲"),
+            artist,
+            album: String(song.album || ""),
+        });
+        if (!params.get("id")) throw new Error("歌曲编号缺失");
 
-        const audioUrl = API.getSongUrl(song, quality);
-        const audioData = await API.fetchJson(audioUrl);
-
-        if (audioData && audioData.url) {
-            const proxiedAudioUrl = buildAudioProxyUrl(audioData.url);
-            const preferredAudioUrl = preferHttpsUrl(audioData.url);
-
-            if (proxiedAudioUrl !== audioData.url) {
-                debugLog(`下载链接已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
-            } else if (preferredAudioUrl !== audioData.url) {
-                debugLog(`下载链接由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
-            }
-
-            const downloadUrl = proxiedAudioUrl || preferredAudioUrl || audioData.url;
-
-            const link = document.createElement("a");
-            link.href = downloadUrl;
-            const preferredExtension =
-                quality === "999" ? "flac" : quality === "740" ? "ape" : "mp3";
-            const fileExtension = (() => {
-                try {
-                    const url = new URL(audioData.url);
-                    const pathname = url.pathname || "";
-                    const match = pathname.match(/\.([a-z0-9]+)$/i);
-                    if (match) {
-                        return match[1];
-                    }
-                } catch (error) {
-                    console.warn("无法从下载链接中解析扩展名:", error);
-                }
-                return preferredExtension;
-            })();
-            link.download = `${song.name} - ${Array.isArray(song.artist) ? song.artist.join(", ") : song.artist}.${fileExtension}`;
-            link.target = "_blank";
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-
-            showNotification("下载已开始", "success");
-        } else {
-            throw new Error("无法获取下载地址");
-        }
+        const link = document.createElement("a");
+        link.href = `/api/download?${params.toString()}`;
+        link.download = `${song.name || "未知歌曲"} - ${artist}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showNotification("正在生成下载文件（含封面）", "success");
     } catch (error) {
         console.error("下载失败:", error);
         showNotification("下载失败，请稍后重试", "error");
