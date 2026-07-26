@@ -369,6 +369,7 @@ let pendingPaletteTimer = null;
 let deferredPaletteHandle = null;
 let deferredPaletteType = "";
 let deferredPaletteUrl = null;
+let playbackRequestSerial = 0;
 const themeDefaults = {
     light: {
         gradient: "",
@@ -4945,40 +4946,19 @@ async function downloadWithQuality(event, index, type, quality) {
     }
 }
 
-// 修复：播放搜索结果 - 添加到播放列表而不是清空
+// 播放搜索结果：保留搜索界面，并使用当前搜索结果作为临时播放队列。
+// 只有用户明确点击“加入指定歌单”时，歌曲才会写入命名歌单。
 async function playSearchResult(index) {
     const song = state.searchResults[index];
     if (!song) return;
 
     try {
-        // 立即隐藏搜索结果，显示播放界面
-        hideSearchResults();
-        dom.searchInput.value = "";
-        if (isMobileView) {
-            closeMobileSearch();
-        }
+        state.currentTrackIndex = index;
+        state.currentPlaylist = "search";
+        state.currentList = "playlist";
 
-        // 检查歌曲是否已在播放列表中
-        const existingIndex = state.playlistSongs.findIndex(s => s.id === song.id && s.source === song.source);
-
-        if (existingIndex !== -1) {
-            // 如果歌曲已存在，直接播放
-            state.currentTrackIndex = existingIndex;
-            state.currentPlaylist = "playlist";
-            state.currentList = "playlist";
-        } else {
-            // 如果歌曲不存在，添加到播放列表
-            state.playlistSongs.push(song);
-            state.currentTrackIndex = state.playlistSongs.length - 1;
-            state.currentPlaylist = "playlist";
-            state.currentList = "playlist";
-        }
-
-        // 更新播放列表显示
-        renderPlaylist();
-
-        // 播放歌曲
         await playSong(song);
+        updatePlaylistHighlight();
         updatePlayModeUI();
 
         showNotification(`正在播放: ${song.name}`);
@@ -6032,8 +6012,18 @@ function waitForAudioReady(player) {
 }
 
 async function playSong(song, options = {}) {
-    const { autoplay = true, startTime = 0, preserveProgress = false, isRetry = false } = options;
+    const {
+        autoplay = true,
+        startTime = 0,
+        preserveProgress = false,
+        isRetry = false,
+        playbackRequestId: existingPlaybackRequestId
+    } = options;
     if (!song) return;
+    const playbackRequestId = Number.isInteger(existingPlaybackRequestId)
+        ? existingPlaybackRequestId
+        : ++playbackRequestSerial;
+    const isCurrentPlaybackRequest = () => playbackRequestId === playbackRequestSerial;
     state.isResolvingAudio = true;
     state.audioPlaybackEstablished = false;
 
@@ -6055,6 +6045,7 @@ async function playSong(song, options = {}) {
         debugLog(`获取音频URL: ${audioUrl}`);
 
         const audioData = await API.fetchJson(audioUrl);
+        if (!isCurrentPlaybackRequest()) return;
 
         if (!audioData || !audioData.url) {
             throw new Error('无法获取音频播放地址');
@@ -6107,15 +6098,18 @@ async function playSong(song, options = {}) {
         let usedFallbackAudio = false;
 
         for (const candidateUrl of candidateAudioUrls) {
+            if (!isCurrentPlaybackRequest()) return;
             dom.audioPlayer.src = candidateUrl;
             dom.audioPlayer.load();
 
             try {
                 await waitForAudioReady(dom.audioPlayer);
+                if (!isCurrentPlaybackRequest()) return;
                 selectedAudioUrl = candidateUrl;
                 usedFallbackAudio = candidateUrl !== primaryAudioUrl && candidateAudioUrls.length > 1;
                 break;
             } catch (error) {
+                if (!isCurrentPlaybackRequest()) return;
                 lastAudioError = error;
                 console.warn('音频元数据加载异常', error);
 
@@ -6151,11 +6145,12 @@ async function playSong(song, options = {}) {
             playPromise = dom.audioPlayer.play();
             if (playPromise !== undefined) {
                 playPromise.catch(async error => {
+                    if (!isCurrentPlaybackRequest()) return;
                     console.error('播放失败:', error);
                     if (!isRetry) {
                         debugLog('音频播放遇到错误，尝试刷新缓存重试...');
                         try {
-                            await playSong(song, { ...options, isRetry: true });
+                            await playSong(song, { ...options, isRetry: true, playbackRequestId });
                         } catch (retryError) {
                             showNotification('播放失败，请检查网络连接', 'error');
                         }
@@ -6171,7 +6166,7 @@ async function playSong(song, options = {}) {
             updatePlayPauseButton();
         }
 
-        scheduleDeferredSongAssets(song, playPromise);
+        scheduleDeferredSongAssets(song, playPromise, playbackRequestId);
 
         debugLog(`开始播放: ${song.name} @${quality}`);
 
@@ -6179,21 +6174,25 @@ async function playSong(song, options = {}) {
             window.__SOLARA_UPDATE_MEDIA_METADATA();
         }
     } catch (error) {
+        if (!isCurrentPlaybackRequest()) return;
         console.error('播放歌曲失败:', error);
         if (!isRetry) {
             debugLog('播放歌曲失败，尝试刷新缓存重试...', error);
-            return await playSong(song, { ...options, isRetry: true });
+            return await playSong(song, { ...options, isRetry: true, playbackRequestId });
         }
         throw error;
     } finally {
-        state.isResolvingAudio = false;
-        savePlayerState();
+        if (isCurrentPlaybackRequest()) {
+            state.isResolvingAudio = false;
+            savePlayerState();
+        }
     }
 }
 
-function scheduleDeferredSongAssets(song, playPromise) {
+function scheduleDeferredSongAssets(song, playPromise, playbackRequestId = playbackRequestSerial) {
+    const isCurrentPlaybackRequest = () => playbackRequestId === playbackRequestSerial;
     const run = () => {
-        if (state.currentSong !== song) {
+        if (!isCurrentPlaybackRequest() || state.currentSong !== song) {
             return;
         }
 
@@ -6204,19 +6203,19 @@ function scheduleDeferredSongAssets(song, playPromise) {
     };
 
     const kickoff = () => {
-        if (state.currentSong !== song) {
+        if (!isCurrentPlaybackRequest() || state.currentSong !== song) {
             return;
         }
 
         if (typeof window.requestAnimationFrame === "function") {
             window.requestAnimationFrame(() => {
-                if (state.currentSong !== song) {
+                if (!isCurrentPlaybackRequest() || state.currentSong !== song) {
                     return;
                 }
 
                 if (typeof window.requestIdleCallback === "function") {
                     window.requestIdleCallback(() => {
-                        if (state.currentSong !== song) {
+                        if (!isCurrentPlaybackRequest() || state.currentSong !== song) {
                             return;
                         }
                         run();
