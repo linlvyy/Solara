@@ -1,4 +1,4 @@
-const CACHE_NAME = "solara-v3-mobile-layout";
+const CACHE_NAME = "solara-v4-mobile-account-playlists";
 const SHELL = ["/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {

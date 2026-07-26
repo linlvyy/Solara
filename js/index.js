@@ -87,6 +87,13 @@ const dom = {
     renamePlaylistBtn: document.getElementById("renamePlaylistBtn"),
     deletePlaylistBtn: document.getElementById("deletePlaylistBtn"),
     accountBadge: document.getElementById("accountBadge"),
+    mobileAccountBadge: document.getElementById("mobileAccountBadge"),
+    mobileLogoutBtn: document.getElementById("mobileLogoutBtn"),
+    mobileNamedPlaylistControls: document.getElementById("mobileNamedPlaylistControls"),
+    mobileNamedPlaylistSelect: document.getElementById("mobileNamedPlaylistSelect"),
+    mobileNewPlaylistBtn: document.getElementById("mobileNewPlaylistBtn"),
+    mobileRenamePlaylistBtn: document.getElementById("mobileRenamePlaylistBtn"),
+    mobileDeletePlaylistBtn: document.getElementById("mobileDeletePlaylistBtn"),
     accountStatus: document.getElementById("accountStatus"),
     logoutBtn: document.getElementById("logoutBtn"),
     logo: document.querySelector(".header h1"),
@@ -199,6 +206,11 @@ function updateMobileLibraryActionVisibility(showFavorites) {
             favoritesGroup.setAttribute("hidden", "");
             favoritesGroup.setAttribute("aria-hidden", "true");
         }
+    }
+
+    if (dom.mobileNamedPlaylistControls) {
+        dom.mobileNamedPlaylistControls.hidden = showFavoritesGroup;
+        dom.mobileNamedPlaylistControls.setAttribute("aria-hidden", showFavoritesGroup ? "true" : "false");
     }
 }
 
@@ -1035,13 +1047,18 @@ function saveNamedPlaylists(options = {}) {
 }
 
 function renderNamedPlaylistSelector() {
-    if (!dom.namedPlaylistSelect) return;
-    dom.namedPlaylistSelect.innerHTML = state.namedPlaylists.map((playlist) => {
+    const options = state.namedPlaylists.map((playlist) => {
         const selected = playlist.id === state.activeNamedPlaylistId ? " selected" : "";
         return `<option value="${escapeHtml(playlist.id)}"${selected}>${escapeHtml(playlist.name)} (${playlist.songs.length})</option>`;
     }).join("");
+    [dom.namedPlaylistSelect, dom.mobileNamedPlaylistSelect].forEach((select) => {
+        if (select) select.innerHTML = options;
+    });
     if (dom.deletePlaylistBtn) {
         dom.deletePlaylistBtn.disabled = state.namedPlaylists.length <= 1;
+    }
+    if (dom.mobileDeletePlaylistBtn) {
+        dom.mobileDeletePlaylistBtn.disabled = state.namedPlaylists.length <= 1;
     }
 }
 
@@ -1128,6 +1145,7 @@ async function loadAccountIdentity() {
         const data = await response.json().catch(() => ({}));
         const label = data.displayName || data.username || "未登录";
         if (dom.accountBadge) dom.accountBadge.textContent = label;
+        if (dom.mobileAccountBadge) dom.mobileAccountBadge.textContent = label;
         if (dom.accountStatus) {
             dom.accountStatus.textContent = data.authenticated
                 ? `当前账号：${label} · 云端同步已启用`
@@ -1135,12 +1153,14 @@ async function loadAccountIdentity() {
         }
         if (!data.authenticated) window.location.replace("/login");
     } catch {
+        if (dom.mobileAccountBadge) dom.mobileAccountBadge.textContent = "状态未知";
         if (dom.accountStatus) dom.accountStatus.textContent = "无法确认账号状态。";
     }
 }
 
 async function logoutCurrentAccount() {
     if (dom.logoutBtn) dom.logoutBtn.disabled = true;
+    if (dom.mobileLogoutBtn) dom.mobileLogoutBtn.disabled = true;
     try {
         await fetch("/api/logout", {
             method: "POST",
@@ -6767,6 +6787,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (dom.namedPlaylistSelect) {
         dom.namedPlaylistSelect.addEventListener("change", (event) => switchNamedPlaylist(event.target.value));
     }
+    if (dom.mobileNamedPlaylistSelect) {
+        dom.mobileNamedPlaylistSelect.addEventListener("change", (event) => switchNamedPlaylist(event.target.value));
+    }
     if (dom.newPlaylistBtn) {
         dom.newPlaylistBtn.addEventListener("click", createNamedPlaylist);
     }
@@ -6776,8 +6799,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (dom.deletePlaylistBtn) {
         dom.deletePlaylistBtn.addEventListener("click", deleteNamedPlaylist);
     }
+    if (dom.mobileNewPlaylistBtn) {
+        dom.mobileNewPlaylistBtn.addEventListener("click", createNamedPlaylist);
+    }
+    if (dom.mobileRenamePlaylistBtn) {
+        dom.mobileRenamePlaylistBtn.addEventListener("click", renameNamedPlaylist);
+    }
+    if (dom.mobileDeletePlaylistBtn) {
+        dom.mobileDeletePlaylistBtn.addEventListener("click", deleteNamedPlaylist);
+    }
     if (dom.logoutBtn) {
         dom.logoutBtn.addEventListener("click", logoutCurrentAccount);
+    }
+    if (dom.mobileLogoutBtn) {
+        dom.mobileLogoutBtn.addEventListener("click", logoutCurrentAccount);
     }
     if (!remoteSyncEnabled) {
         initSettings();
