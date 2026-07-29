@@ -4733,7 +4733,7 @@ async function loadMoreResults() {
             );
             results = deepSearch.results;
             hasMore = deepSearch.hasMore;
-            debugLog(`JOOX 深度搜索: Apple 目录共 ${deepSearch.total} 首，本批匹配 ${results.length} 首`);
+            debugLog(`JOOX 深度搜索: MusicBrainz 目录共 ${deepSearch.total} 条录音，本批匹配 ${results.length} 首`);
         } else {
             results = await API.search(state.searchKeyword, source, 20, state.searchPage);
             hasMore = results.length > 0;
