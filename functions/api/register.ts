@@ -30,7 +30,7 @@ function json(body: unknown, status = 200, headers: HeadersInit = {}): Response 
 
 function getMaxUsers(env: Env): number {
   const configured = Number.parseInt(env.MAX_USERS || "", 10);
-  if (!Number.isFinite(configured)) return 60;
+  if (!Number.isFinite(configured)) return 20;
   return Math.min(Math.max(configured, 1), 100_000);
 }
 
