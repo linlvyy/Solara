@@ -679,7 +679,6 @@ function buildAudioProxyUrl(url) {
 }
 
 const SOURCE_OPTIONS = [
-    { value: "all", label: "智能聚合（推荐）" },
     { value: "joox", label: "JOOX音乐" },
     { value: "bilibili", label: "哔哩哔哩" },
     { value: "kuwo", label: "酷我音乐" },
@@ -966,16 +965,13 @@ const API = {
         }
     },
 
-    search: async (keyword, source = "all", count = 20, page = 1) => {
+    search: async (keyword, source = "joox", count = 20, page = 1) => {
         // JOOX 当前会忽略 pages 参数并在每一页返回完全相同的结果。
-        // 聚合搜索从第二页起跳过 JOOX，避免“加载更多”不断重复第一页。
         if (source === "joox" && page > 1) {
             return [];
         }
-        const requestedSources = source === "all"
-            ? (page > 1 ? ["kuwo", "netease", "bilibili"] : ["joox", "kuwo", "netease", "bilibili"])
-            : [source];
-        const perSourceCount = source === "all" ? Math.max(10, Math.ceil(count / 2)) : Math.max(count, 30);
+        const requestedSources = [source];
+        const perSourceCount = Math.max(count, 30);
 
         const requests = requestedSources.map(async (requestedSource) => {
             const signature = API.generateSignature();
@@ -1024,9 +1020,7 @@ const API = {
 
         const seenIds = new Set();
         const seenSongs = new Set();
-        const resultLimit = (source === "joox" || (source === "all" && page === 1))
-            ? Math.max(count, 30)
-            : count;
+        const resultLimit = source === "joox" ? Math.max(count, 30) : count;
         return merged
             .sort((left, right) => relevance(right) - relevance(left))
             .filter((song) => {
