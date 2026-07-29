@@ -679,10 +679,10 @@ function buildAudioProxyUrl(url) {
 }
 
 const SOURCE_OPTIONS = [
-    { value: "joox", label: "JOOX音乐" },
-    { value: "bilibili", label: "哔哩哔哩" },
+    { value: "netease", label: "网易云音乐" },
     { value: "kuwo", label: "酷我音乐" },
-    { value: "netease", label: "网易云音乐" }
+    { value: "joox", label: "JOOX音乐" },
+    { value: "bilibili", label: "哔哩哔哩" }
 ];
 
 function normalizeSource(value) {
@@ -850,67 +850,6 @@ const savedCurrentPlaylist = (() => {
     return playlists.includes(stored) ? stored : "playlist";
 })();
 
-const GD_DIRECT_API_BASE_URL = "https://music-api.gdstudio.xyz/api.php";
-
-function canUseGdJsonpFallback(url) {
-    try {
-        const parsed = new URL(url, window.location.origin);
-        return parsed.origin === window.location.origin
-            && parsed.pathname === "/proxy"
-            && !parsed.searchParams.has("target");
-    } catch (_) {
-        return false;
-    }
-}
-
-function fetchGdJsonp(url) {
-    return new Promise((resolve, reject) => {
-        let parsed;
-        try {
-            parsed = new URL(url, window.location.origin);
-        } catch (error) {
-            reject(error);
-            return;
-        }
-
-        const callbackName = `__solaraGdCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        const target = new URL(GD_DIRECT_API_BASE_URL);
-        parsed.searchParams.forEach((value, key) => {
-            if (!["target", "callback", "s", "nocache"].includes(key)) {
-                target.searchParams.set(key, value);
-            }
-        });
-        target.searchParams.set("callback", callbackName);
-
-        const script = document.createElement("script");
-        const cleanup = () => {
-            window.clearTimeout(timeoutId);
-            script.remove();
-            try {
-                delete window[callbackName];
-            } catch (_) {
-                window[callbackName] = undefined;
-            }
-        };
-        const timeoutId = window.setTimeout(() => {
-            cleanup();
-            reject(new Error("GD JSONP request timed out"));
-        }, 15000);
-
-        window[callbackName] = (data) => {
-            cleanup();
-            resolve(data);
-        };
-        script.onerror = () => {
-            cleanup();
-            reject(new Error("GD JSONP request failed"));
-        };
-        script.src = target.toString();
-        script.async = true;
-        document.head.appendChild(script);
-    });
-}
-
 // API配置 - 修复API地址和请求方式
 const API = {
     baseUrl: "/proxy",
@@ -920,9 +859,8 @@ const API = {
     },
 
     fetchJson: async (url) => {
-        let response = null;
         try {
-            response = await fetch(url, {
+            const response = await fetch(url, {
                 headers: {
                     "Accept": "application/json",
                 },
@@ -951,78 +889,36 @@ const API = {
                 return text;
             }
         } catch (error) {
-            const shouldFallback = canUseGdJsonpFallback(url)
-                && (!response || response.status >= 500);
-            if (shouldFallback) {
-                try {
-                    debugLog(`代理请求失败（${response?.status || "网络错误"}），切换 GD 直连备用通道`);
-                    return await fetchGdJsonp(url);
-                } catch (fallbackError) {
-                    console.error("GD JSONP fallback failed:", fallbackError);
-                }
-            }
             console.error("API request error:", error);
             throw error;
         }
     },
 
-    search: async (keyword, source = "joox", count = 20, page = 1) => {
-        // JOOX 当前会忽略 pages 参数并在每一页返回完全相同的结果。
-        if (source === "joox" && page > 1) {
-            return [];
-        }
-        const requestedSources = [source];
-        const perSourceCount = Math.max(count, 30);
+    search: async (keyword, source = "netease", count = 20, page = 1) => {
+        const signature = API.generateSignature();
+        const url = `${API.baseUrl}?types=search&source=${source}&name=${encodeURIComponent(keyword)}&count=${count}&pages=${page}&s=${signature}`;
 
-        const requests = requestedSources.map(async (requestedSource) => {
-            const signature = API.generateSignature();
-            const url = `${API.baseUrl}?types=search&source=${requestedSource}&name=${encodeURIComponent(keyword)}&count=${perSourceCount}&pages=${page}&s=${signature}`;
+        try {
             debugLog(`API请求: ${url}`);
             const data = await API.fetchJson(url);
-            if (!Array.isArray(data)) throw new Error(`${requestedSource} 搜索结果格式错误`);
-            return data.map((song) => ({
-                id: song.id || song.url_id,
+            debugLog(`API响应: ${JSON.stringify(data).substring(0, 200)}...`);
+
+            if (!Array.isArray(data)) throw new Error("搜索结果格式错误");
+
+            return data.map(song => ({
+                id: song.id,
                 name: song.name,
                 artist: song.artist,
                 album: song.album,
                 pic_id: song.pic_id,
-                url_id: song.url_id || song.id,
-                lyric_id: song.lyric_id || song.id,
-                source: song.source || requestedSource,
-            })).filter((song) => song.id && song.name);
-        });
-
-        const settled = await Promise.allSettled(requests);
-        const merged = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-        if (merged.length === 0 && settled.some((result) => result.status === "rejected")) {
-            const firstFailure = settled.find((result) => result.status === "rejected");
-            throw firstFailure.reason;
+                url_id: song.url_id,
+                lyric_id: song.lyric_id,
+                source: song.source,
+            }));
+        } catch (error) {
+            debugLog(`API错误: ${error.message}`);
+            throw error;
         }
-
-        const normalizedKeyword = String(keyword || "").trim().toLocaleLowerCase();
-        const compactKeyword = normalizedKeyword.replace(/[\s\p{P}\p{S}]+/gu, "");
-        const relevance = (song) => {
-            const name = String(song.name || "").toLocaleLowerCase();
-            const artist = (Array.isArray(song.artist) ? song.artist.join(" ") : String(song.artist || "")).toLocaleLowerCase();
-            const compactName = name.replace(/[\s\p{P}\p{S}]+/gu, "");
-            const compactArtist = artist.replace(/[\s\p{P}\p{S}]+/gu, "");
-            let score = 0;
-            const exactName = compactName === compactKeyword;
-            const exactArtist = compactArtist === compactKeyword;
-            if (exactName) score += 120;
-            if (exactArtist) score += 100;
-            if (compactName.startsWith(compactKeyword)) score += 70;
-            if (compactArtist.startsWith(compactKeyword)) score += 60;
-            if (!exactArtist && compactName.includes(compactKeyword)) score += 45;
-            if (compactArtist.includes(compactKeyword)) score += 40;
-            if (song.source === "joox") score += 4;
-            return score;
-        };
-
-        const resultLimit = source === "joox" ? Math.max(count, 30) : count;
-        return merged
-            .sort((left, right) => relevance(right) - relevance(left))
-            .slice(0, resultLimit);
     },
 
     getRadarPlaylist: async (playlistId = "3778678", options = {}) => {
@@ -4541,7 +4437,7 @@ async function performSearch(isLiveSearch = false) {
             state.searchResults = [...state.searchResults, ...results];
         }
 
-        state.hasMoreResults = source !== "joox" && results.length > 0;
+        state.hasMoreResults = results.length === 20;
 
         // 显示搜索结果
         displaySearchResults(results, {
@@ -4594,19 +4490,15 @@ async function loadMoreResults() {
         const results = await API.search(state.searchKeyword, source, 20, state.searchPage);
         if (results.length > 0) {
             state.searchResults = [...state.searchResults, ...results];
-            state.hasMoreResults = results.length > 0 && source !== "joox";
+            state.hasMoreResults = results.length === 20;
             displaySearchResults(results, {
                 totalCount: state.searchResults.length,
             });
             persistLastSearchState();
-            debugLog(`加载完成: 新增 ${results.length} 个结果（未去重）`);
+            debugLog(`加载完成: 新增 ${results.length} 个结果`);
         } else {
             state.hasMoreResults = false;
             showNotification("没有更多结果了");
-            persistLastSearchState();
-            displaySearchResults([], {
-                totalCount: state.searchResults.length,
-            });
             debugLog("没有更多结果");
         }
     } catch (error) {

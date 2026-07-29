@@ -1,4 +1,4 @@
-const CACHE_NAME = "solara-v16-search-no-dedupe";
+const CACHE_NAME = "solara-v17-upstream-search";
 const SHELL = ["/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {
