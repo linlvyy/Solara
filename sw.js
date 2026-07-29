@@ -1,4 +1,4 @@
-const CACHE_NAME = "solara-v12-ipad-layout";
+const CACHE_NAME = "solara-v13-recent-playback";
 const SHELL = ["/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {

@@ -709,18 +709,40 @@ const savedPlaylistSongs = (() => {
     return Array.isArray(playlist) ? playlist : [];
 })();
 
+const RECENT_PLAYLIST_ID = "default";
+const RECENT_PLAYLIST_NAME = "最近播放";
+
+function normalizeNamedPlaylistCollection(playlists, fallbackSongs = []) {
+    const normalized = (Array.isArray(playlists) ? playlists : [])
+        .filter((playlist) => playlist && typeof playlist.id === "string" && typeof playlist.name === "string")
+        .map((playlist) => ({
+            id: playlist.id,
+            name: playlist.name.slice(0, 40),
+            songs: Array.isArray(playlist.songs) ? playlist.songs : [],
+        }));
+
+    const recentIndex = normalized.findIndex((playlist) => playlist.id === RECENT_PLAYLIST_ID);
+    if (recentIndex === -1) {
+        normalized.unshift({
+            id: RECENT_PLAYLIST_ID,
+            name: RECENT_PLAYLIST_NAME,
+            songs: Array.isArray(fallbackSongs) ? fallbackSongs : [],
+        });
+    } else {
+        const [recentPlaylist] = normalized.splice(recentIndex, 1);
+        recentPlaylist.name = RECENT_PLAYLIST_NAME;
+        normalized.unshift(recentPlaylist);
+    }
+
+    return normalized;
+}
+
 const savedNamedPlaylists = (() => {
     const stored = parseJSON(safeGetLocalStorage("namedPlaylists"), null);
     if (Array.isArray(stored) && stored.length > 0) {
-        return stored
-            .filter((playlist) => playlist && typeof playlist.id === "string" && typeof playlist.name === "string")
-            .map((playlist) => ({
-                id: playlist.id,
-                name: playlist.name.slice(0, 40),
-                songs: Array.isArray(playlist.songs) ? playlist.songs : [],
-            }));
+        return normalizeNamedPlaylistCollection(stored);
     }
-    return [{ id: "default", name: "我的歌单", songs: savedPlaylistSongs }];
+    return normalizeNamedPlaylistCollection([], savedPlaylistSongs);
 })();
 
 const savedActiveNamedPlaylistId = (() => {
@@ -1188,11 +1210,18 @@ function renderNamedPlaylistSelector() {
     [dom.namedPlaylistSelect, dom.mobileNamedPlaylistSelect].forEach((select) => {
         if (select) select.innerHTML = options;
     });
+    const isRecentPlaylist = state.activeNamedPlaylistId === RECENT_PLAYLIST_ID;
+    if (dom.renamePlaylistBtn) {
+        dom.renamePlaylistBtn.disabled = isRecentPlaylist;
+    }
+    if (dom.mobileRenamePlaylistBtn) {
+        dom.mobileRenamePlaylistBtn.disabled = isRecentPlaylist;
+    }
     if (dom.deletePlaylistBtn) {
-        dom.deletePlaylistBtn.disabled = state.namedPlaylists.length <= 1;
+        dom.deletePlaylistBtn.disabled = isRecentPlaylist || state.namedPlaylists.length <= 1;
     }
     if (dom.mobileDeletePlaylistBtn) {
-        dom.mobileDeletePlaylistBtn.disabled = state.namedPlaylists.length <= 1;
+        dom.mobileDeletePlaylistBtn.disabled = isRecentPlaylist || state.namedPlaylists.length <= 1;
     }
     renderImportPlaylistTargets();
 }
@@ -1353,6 +1382,10 @@ function createNamedPlaylist() {
 function renameNamedPlaylist() {
     const playlist = getActiveNamedPlaylist();
     if (!playlist) return;
+    if (playlist.id === RECENT_PLAYLIST_ID) {
+        showNotification("“最近播放”是系统列表，不能重命名", "warning");
+        return;
+    }
     const name = window.prompt("重命名歌单", playlist.name);
     if (!name || !name.trim()) return;
     playlist.name = name.trim().slice(0, 40);
@@ -1367,6 +1400,10 @@ function deleteNamedPlaylist() {
         return;
     }
     const playlist = getActiveNamedPlaylist();
+    if (playlist?.id === RECENT_PLAYLIST_ID) {
+        showNotification("“最近播放”是系统列表，不能删除", "warning");
+        return;
+    }
     if (!playlist || !window.confirm(`确定删除歌单「${playlist.name}」？`)) return;
     state.namedPlaylists = state.namedPlaylists.filter((item) => item.id !== playlist.id);
     const next = state.namedPlaylists[0];
@@ -1507,13 +1544,7 @@ function applyPersistentSnapshotFromRemote(data) {
     if (typeof data.namedPlaylists === "string") {
         const playlists = parseJSON(data.namedPlaylists, []);
         if (Array.isArray(playlists) && playlists.length > 0) {
-            state.namedPlaylists = playlists
-                .filter((playlist) => playlist && typeof playlist.id === "string" && typeof playlist.name === "string")
-                .map((playlist) => ({
-                    id: playlist.id,
-                    name: playlist.name.slice(0, 40),
-                    songs: Array.isArray(playlist.songs) ? playlist.songs : [],
-                }));
+            state.namedPlaylists = normalizeNamedPlaylistCollection(playlists);
             if (state.namedPlaylists.length > 0) {
                 const requestedId = typeof data.activeNamedPlaylistId === "string"
                     ? data.activeNamedPlaylistId
@@ -5039,8 +5070,43 @@ async function downloadWithQuality(event, index, type, quality) {
     }
 }
 
-// 播放搜索结果：保留搜索界面，并使用当前搜索结果作为临时播放队列。
-// 只有用户明确点击“加入指定歌单”时，歌曲才会写入命名歌单。
+function recordRecentPlayback(song) {
+    const normalizedSong = sanitizeImportedSong(song) || (song && typeof song === "object" ? { ...song } : null);
+    if (!normalizedSong) return;
+
+    syncActiveNamedPlaylistFromQueue();
+
+    let recentPlaylist = state.namedPlaylists.find((playlist) => playlist.id === RECENT_PLAYLIST_ID);
+    if (!recentPlaylist) {
+        recentPlaylist = { id: RECENT_PLAYLIST_ID, name: RECENT_PLAYLIST_NAME, songs: [] };
+        state.namedPlaylists.unshift(recentPlaylist);
+    }
+    recentPlaylist.name = RECENT_PLAYLIST_NAME;
+
+    const recentSongs = recentPlaylist.id === state.activeNamedPlaylistId
+        ? state.playlistSongs.slice()
+        : (Array.isArray(recentPlaylist.songs) ? recentPlaylist.songs.slice() : []);
+    const songKey = getSongKey(normalizedSong);
+    const duplicateIndex = songKey
+        ? recentSongs.findIndex((item) => getSongKey(item) === songKey)
+        : -1;
+    if (duplicateIndex >= 0) {
+        recentSongs.splice(duplicateIndex, 1);
+    }
+    recentSongs.unshift(normalizedSong);
+    recentPlaylist.songs = recentSongs;
+
+    if (recentPlaylist.id === state.activeNamedPlaylistId) {
+        state.playlistSongs = recentSongs.slice();
+        renderPlaylist();
+    }
+
+    renderNamedPlaylistSelector();
+    saveNamedPlaylists();
+}
+
+// 播放搜索结果：保留搜索界面，使用当前搜索结果作为临时播放队列，
+// 并在成功开始播放后将歌曲记录到“最近播放”。
 async function playSearchResult(index) {
     const song = state.searchResults[index];
     if (!song) return;
@@ -5051,6 +5117,7 @@ async function playSearchResult(index) {
         state.currentList = "playlist";
 
         await playSong(song);
+        recordRecentPlayback(song);
         updatePlaylistHighlight();
         updatePlayModeUI();
 
