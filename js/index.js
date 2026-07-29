@@ -681,12 +681,9 @@ function buildAudioProxyUrl(url) {
 const SOURCE_OPTIONS = [
     { value: "joox", label: "JOOX音乐" },
     { value: "bilibili", label: "哔哩哔哩" },
+    { value: "kuwo", label: "酷我音乐" },
     { value: "netease", label: "网易云音乐" }
 ];
-
-const JOOX_DEEP_SEARCH_PAGE_SIZE = 12;
-const artistCatalogCache = new Map();
-const jooxCatalogResolutionCache = new Map();
 
 function normalizeSource(value) {
     const allowed = SOURCE_OPTIONS.map(option => option.value);
@@ -1040,118 +1037,6 @@ const API = {
             .slice(0, resultLimit);
     },
 
-    searchJooxDeep: async (keyword, checkedTrackIds = new Set(), excludedSongs = []) => {
-        const artistCacheKey = normalizeSearchIdentityText(keyword);
-        let catalog = artistCatalogCache.get(artistCacheKey);
-
-        if (!catalog) {
-            const catalogResponse = await fetch(`/api/catalog?artist=${encodeURIComponent(keyword)}`, {
-                headers: { Accept: "application/json" },
-            });
-            const catalogData = await catalogResponse.json().catch(() => ({}));
-            if (!catalogResponse.ok) {
-                throw new Error(catalogData?.error || `深度目录读取失败 (${catalogResponse.status})`);
-            }
-            if (!catalogData?.artistName || !Array.isArray(catalogData?.tracks) || catalogData.tracks.length === 0) {
-                return { results: [], hasMore: false, total: 0 };
-            }
-
-            catalog = {
-                artistName: catalogData.artistName,
-                artistAliases: Array.isArray(catalogData.artistAliases)
-                    ? catalogData.artistAliases.filter(Boolean)
-                    : [catalogData.artistName],
-                tracks: catalogData.tracks,
-            };
-            artistCatalogCache.set(artistCacheKey, catalog);
-        }
-
-        const excludedTitles = new Set(
-            (Array.isArray(excludedSongs) ? excludedSongs : [])
-                .map((song) => normalizeSearchIdentityText(song?.name))
-                .filter(Boolean)
-        );
-        const remainingTracks = catalog.tracks.filter((track) => {
-            const trackId = String(track.trackId || "");
-            if (trackId && checkedTrackIds.has(trackId)) return false;
-            return !excludedTitles.has(normalizeSearchIdentityText(track.trackName));
-        });
-        const catalogTracks = remainingTracks.slice(0, JOOX_DEEP_SEARCH_PAGE_SIZE);
-        if (catalogTracks.length === 0) {
-            return { results: [], hasMore: false, total: catalog.tracks.length };
-        }
-        catalogTracks.forEach((track) => {
-            if (track.trackId) checkedTrackIds.add(String(track.trackId));
-        });
-
-        const resolveTrack = async (track) => {
-            const resolutionKey = `${normalizeSearchIdentityText(catalog.artistName)}::${normalizeSearchIdentityText(track.trackName)}`;
-            if (jooxCatalogResolutionCache.has(resolutionKey)) {
-                return jooxCatalogResolutionCache.get(resolutionKey);
-            }
-
-            const candidates = await API.search(`${track.trackName} ${keyword}`, "joox", 30, 1);
-            const targetTitle = normalizeSearchIdentityText(track.trackName);
-            const targetArtists = new Set(
-                [...(catalog.artistAliases || []), catalog.artistName, track.artistName, keyword]
-                    .map(normalizeSearchIdentityText)
-                    .filter(Boolean)
-            );
-            const targetAlbum = normalizeSearchIdentityText(track.collectionName);
-            const stripVersion = (value) => normalizeSearchIdentityText(
-                String(value || "").replace(
-                    /[（(][^）)]*(?:live|現場|现场|bonus|remaster|伴奏|demo|feat\.?|featuring|with|合作)[^）)]*[）)]/gi,
-                    ""
-                )
-            );
-            const baseTargetTitle = stripVersion(track.trackName);
-
-            let bestMatch = null;
-            let bestScore = 0;
-            candidates.forEach((candidate) => {
-                const candidateTitle = normalizeSearchIdentityText(candidate.name);
-                const candidateBaseTitle = stripVersion(candidate.name);
-                const artistText = normalizeSearchIdentityText(
-                    Array.isArray(candidate.artist) ? candidate.artist.join(" ") : candidate.artist
-                );
-                const artistMatches = [...targetArtists].some(
-                    (targetArtist) => artistText.includes(targetArtist) || targetArtist.includes(artistText)
-                );
-                if (!artistMatches) return;
-
-                let score = 0;
-                if (candidateTitle === targetTitle) score += 120;
-                else if (candidateBaseTitle && candidateBaseTitle === baseTargetTitle) score += 90;
-                else return;
-                if (targetAlbum && normalizeSearchIdentityText(candidate.album) === targetAlbum) score += 20;
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestMatch = {
-                        ...candidate,
-                        catalog_source: "itunes",
-                        catalog_track_id: String(track.trackId || ""),
-                    };
-                }
-            });
-
-            jooxCatalogResolutionCache.set(resolutionKey, bestMatch);
-            return bestMatch;
-        };
-
-        const resolved = [];
-        for (let index = 0; index < catalogTracks.length; index += 4) {
-            const batch = catalogTracks.slice(index, index + 4);
-            const matches = await Promise.all(batch.map(resolveTrack));
-            resolved.push(...matches.filter(Boolean));
-        }
-
-        return {
-            results: resolved,
-            hasMore: remainingTracks.length > catalogTracks.length,
-            total: catalog.tracks.length,
-        };
-    },
-
     getRadarPlaylist: async (playlistId = "3778678", options = {}) => {
         const signature = API.generateSignature();
 
@@ -1235,7 +1120,6 @@ const state = {
     currentLyricLine: -1,
     currentPlaylist: savedCurrentPlaylist, // 'online', 'search', or 'playlist'
     searchPage: savedSearchStateMatchesSource ? savedLastSearchState.page : 1,
-    jooxDeepCheckedTrackIds: new Set(),
     searchKeyword: savedSearchStateMatchesSource ? savedLastSearchState.keyword : "",
     searchSource: savedSearchSource,
     hasMoreResults: savedSearchStateMatchesSource ? savedLastSearchState.hasMore : true,
@@ -3578,7 +3462,6 @@ function selectSearchSource(source) {
     state.searchKeyword = "";
     state.searchPage = 1;
     state.searchResults = [];
-    state.jooxDeepCheckedTrackIds = new Set();
     state.hasMoreResults = true;
     state.renderedSearchCount = 0;
     resetSelectedSearchResults();
@@ -4638,7 +4521,6 @@ async function performSearch(isLiveSearch = false) {
         state.searchKeyword = query;
         state.searchSource = source;
         state.searchResults = [];
-        state.jooxDeepCheckedTrackIds = new Set();
         state.hasMoreResults = true;
         state.renderedSearchCount = 0;
         resetSelectedSearchResults();
@@ -4671,7 +4553,7 @@ async function performSearch(isLiveSearch = false) {
             state.searchResults = [...state.searchResults, ...results];
         }
 
-        state.hasMoreResults = results.length > 0;
+        state.hasMoreResults = source !== "joox" && results.length > 0;
 
         // 显示搜索结果
         displaySearchResults(results, {
@@ -4713,49 +4595,25 @@ async function loadMoreResults() {
 
     try {
         loadMoreBtn.disabled = true;
-        const source = normalizeSource(state.searchSource);
-        loadMoreBtn.innerHTML = source === "joox"
-            ? '<span class="loader"></span><span>JOOX 深度匹配中...</span>'
-            : '<span class="loader"></span><span>加载中...</span>';
+        loadMoreBtn.innerHTML = '<span class="loader"></span><span>加载中...</span>';
 
         state.searchPage++;
         debugLog(`加载第 ${state.searchPage} 页结果`);
 
+        const source = normalizeSource(state.searchSource);
         state.searchSource = source;
         safeSetLocalStorage("searchSource", source);
-        let results;
-        let hasMore;
-        if (source === "joox") {
-            const deepSearch = await API.searchJooxDeep(
-                state.searchKeyword,
-                state.jooxDeepCheckedTrackIds,
-                state.searchResults
-            );
-            results = deepSearch.results;
-            hasMore = deepSearch.hasMore;
-            debugLog(`JOOX 深度搜索: MusicBrainz 目录共 ${deepSearch.total} 条录音，本批匹配 ${results.length} 首`);
-        } else {
-            results = await API.search(state.searchKeyword, source, 20, state.searchPage);
-            hasMore = results.length > 0;
-        }
+        const results = await API.search(state.searchKeyword, source, 20, state.searchPage);
         const uniqueResults = mergeUniqueSearchResults(state.searchResults, results);
 
         if (uniqueResults.length > 0) {
             state.searchResults = [...state.searchResults, ...uniqueResults];
-            state.hasMoreResults = hasMore;
+            state.hasMoreResults = results.length > 0 && source !== "joox";
             displaySearchResults(uniqueResults, {
                 totalCount: state.searchResults.length,
             });
             persistLastSearchState();
             debugLog(`加载完成: 接口返回 ${results.length} 个，去重后新增 ${uniqueResults.length} 个结果`);
-        } else if (source === "joox" && hasMore) {
-            state.hasMoreResults = true;
-            showNotification("本批没有新的 JOOX 匹配，可继续加载下一批", "warning");
-            persistLastSearchState();
-            displaySearchResults([], {
-                totalCount: state.searchResults.length,
-            });
-            debugLog("JOOX 本批匹配结果均已存在或没有精确匹配");
         } else {
             state.hasMoreResults = false;
             showNotification("没有更多结果了");
@@ -4772,8 +4630,7 @@ async function loadMoreResults() {
     } finally {
         if (loadMoreBtn) {
             loadMoreBtn.disabled = false;
-            const label = normalizeSource(state.searchSource) === "joox" ? "深度加载更多" : "加载更多";
-            loadMoreBtn.innerHTML = `<i class="fas fa-plus"></i><span>${label}</span>`;
+            loadMoreBtn.innerHTML = "<i class=\"fas fa-plus\"></i><span>加载更多</span>";
         }
     }
 }
@@ -5075,8 +4932,7 @@ function createLoadMoreButton() {
     button.id = "loadMoreBtn";
     button.className = "load-more-btn";
     button.type = "button";
-    const label = normalizeSource(state.searchSource) === "joox" ? "深度加载更多" : "加载更多";
-    button.innerHTML = `<i class="fas fa-plus"></i><span>${label}</span>`;
+    button.innerHTML = '<i class="fas fa-plus"></i><span>加载更多</span>';
     button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -6337,18 +6193,13 @@ function updatePlaylistHighlight() {
 }
 
 // 修复：播放歌曲函数 - 支持统一播放列表
-function waitForAudioReady(player, timeoutMs = 12000) {
+function waitForAudioReady(player) {
     if (!player) return Promise.resolve();
     if (player.readyState >= 1) {
         return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
-        let timeoutId = null;
         const cleanup = () => {
-            if (timeoutId !== null) {
-                window.clearTimeout(timeoutId);
-                timeoutId = null;
-            }
             player.removeEventListener('loadedmetadata', onLoaded);
             player.removeEventListener('error', onError);
         };
@@ -6362,18 +6213,7 @@ function waitForAudioReady(player, timeoutMs = 12000) {
         };
         player.addEventListener('loadedmetadata', onLoaded, { once: true });
         player.addEventListener('error', onError, { once: true });
-        timeoutId = window.setTimeout(() => {
-            cleanup();
-            reject(new Error('音频加载超时'));
-        }, timeoutMs);
     });
-}
-
-function getPlaybackQualityFallbacks(requestedQuality) {
-    const qualityOrder = ["999", "320", "192", "128"];
-    const normalized = normalizeQuality(requestedQuality);
-    const startIndex = qualityOrder.indexOf(normalized);
-    return startIndex >= 0 ? qualityOrder.slice(startIndex) : ["320", "192", "128"];
 }
 
 async function playSong(song, options = {}) {
@@ -6403,7 +6243,33 @@ async function playSong(song, options = {}) {
         updateCurrentSongInfo(song, { loadArtwork: false });
 
         const quality = state.playbackQuality || '320';
-        const qualityFallbacks = getPlaybackQualityFallbacks(quality);
+        let audioUrl = API.getSongUrl(song, quality);
+        if (isRetry) {
+            audioUrl += '&nocache=true';
+        }
+        debugLog(`获取音频URL: ${audioUrl}`);
+
+        const audioData = await API.fetchJson(audioUrl);
+        if (!isCurrentPlaybackRequest()) return;
+
+        if (!audioData || !audioData.url) {
+            throw new Error('无法获取音频播放地址');
+        }
+
+        const originalAudioUrl = audioData.url;
+        const proxiedAudioUrl = buildAudioProxyUrl(originalAudioUrl);
+        const preferredAudioUrl = preferHttpsUrl(originalAudioUrl);
+        const candidateAudioUrls = Array.from(
+            new Set([proxiedAudioUrl, preferredAudioUrl, originalAudioUrl].filter(Boolean))
+        );
+
+        const primaryAudioUrl = candidateAudioUrls[0] || originalAudioUrl;
+
+        if (proxiedAudioUrl && proxiedAudioUrl !== originalAudioUrl) {
+            debugLog(`音频地址已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
+        } else if (preferredAudioUrl && preferredAudioUrl !== originalAudioUrl) {
+            debugLog(`音频地址由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
+        }
 
         state.currentSong = song;
         state.currentAudioUrl = null;
@@ -6433,74 +6299,29 @@ async function playSong(song, options = {}) {
         state.pendingSeekTime = startTime > 0 ? startTime : null;
 
         let selectedAudioUrl = null;
-        let selectedQuality = null;
         let lastAudioError = null;
         let usedFallbackAudio = false;
 
-        for (const candidateQuality of qualityFallbacks) {
+        for (const candidateUrl of candidateAudioUrls) {
             if (!isCurrentPlaybackRequest()) return;
+            dom.audioPlayer.src = candidateUrl;
+            dom.audioPlayer.load();
 
-            let audioUrl = API.getSongUrl(song, candidateQuality);
-            if (isRetry) {
-                audioUrl += '&nocache=true';
-            }
-            debugLog(`获取音频URL: ${audioUrl}`);
-
-            let audioData;
             try {
-                audioData = await API.fetchJson(audioUrl);
+                await waitForAudioReady(dom.audioPlayer);
+                if (!isCurrentPlaybackRequest()) return;
+                selectedAudioUrl = candidateUrl;
+                usedFallbackAudio = candidateUrl !== primaryAudioUrl && candidateAudioUrls.length > 1;
+                break;
             } catch (error) {
                 if (!isCurrentPlaybackRequest()) return;
                 lastAudioError = error;
-                console.warn(`获取 ${candidateQuality} 音质地址失败`, error);
-                continue;
-            }
+                console.warn('音频元数据加载异常', error);
 
-            if (!audioData || !audioData.url) {
-                lastAudioError = new Error(`${candidateQuality} 音质暂无播放地址`);
-                debugLog(`${candidateQuality} 音质暂无播放地址，尝试较低音质`);
-                continue;
-            }
-
-            const originalAudioUrl = audioData.url;
-            const proxiedAudioUrl = buildAudioProxyUrl(originalAudioUrl);
-            const preferredAudioUrl = preferHttpsUrl(originalAudioUrl);
-            const candidateAudioUrls = Array.from(
-                new Set([proxiedAudioUrl, preferredAudioUrl, originalAudioUrl].filter(Boolean))
-            );
-            const primaryAudioUrl = candidateAudioUrls[0] || originalAudioUrl;
-
-            if (proxiedAudioUrl && proxiedAudioUrl !== originalAudioUrl) {
-                debugLog(`音频地址已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
-            } else if (preferredAudioUrl && preferredAudioUrl !== originalAudioUrl) {
-                debugLog(`音频地址由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
-            }
-
-            for (const candidateUrl of candidateAudioUrls) {
-                if (!isCurrentPlaybackRequest()) return;
-                dom.audioPlayer.src = candidateUrl;
-                dom.audioPlayer.load();
-
-                try {
-                    await waitForAudioReady(dom.audioPlayer);
-                    if (!isCurrentPlaybackRequest()) return;
-                    selectedAudioUrl = candidateUrl;
-                    selectedQuality = candidateQuality;
-                    usedFallbackAudio = candidateUrl !== primaryAudioUrl && candidateAudioUrls.length > 1;
-                    break;
-                } catch (error) {
-                    if (!isCurrentPlaybackRequest()) return;
-                    lastAudioError = error;
-                    console.warn(`${candidateQuality} 音质元数据加载异常`, error);
-
-                    if (candidateUrl === primaryAudioUrl && candidateAudioUrls.length > 1) {
-                        debugLog('主音频地址加载失败，尝试使用备用地址');
-                    }
+                if (candidateUrl === primaryAudioUrl && candidateAudioUrls.length > 1) {
+                    debugLog('主音频地址加载失败，尝试使用备用地址');
                 }
             }
-
-            if (selectedAudioUrl) break;
-            debugLog(`${candidateQuality} 音质不可播放，尝试较低音质`);
         }
 
         if (!selectedAudioUrl) {
@@ -6510,12 +6331,6 @@ async function playSong(song, options = {}) {
         if (usedFallbackAudio) {
             debugLog(`已回退至备用音频地址: ${selectedAudioUrl}`);
             showNotification('主音频加载失败，已切换到备用音源', 'warning');
-        }
-        if (selectedQuality && selectedQuality !== quality) {
-            const fallbackOption = QUALITY_OPTIONS.find(item => item.value === selectedQuality);
-            const fallbackLabel = fallbackOption?.label || `${selectedQuality} kbps`;
-            debugLog(`当前歌曲不支持 ${quality} 音质，已自动降至 ${selectedQuality}`);
-            showNotification(`当前歌曲没有所选音质，已自动使用${fallbackLabel}`, 'warning');
         }
 
         state.currentAudioUrl = selectedAudioUrl;
@@ -6558,7 +6373,7 @@ async function playSong(song, options = {}) {
 
         scheduleDeferredSongAssets(song, playPromise, playbackRequestId);
 
-        debugLog(`开始播放: ${song.name} @${selectedQuality || quality}`);
+        debugLog(`开始播放: ${song.name} @${quality}`);
 
         if (typeof window.__SOLARA_UPDATE_MEDIA_METADATA === 'function') {
             window.__SOLARA_UPDATE_MEDIA_METADATA();
