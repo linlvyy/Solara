@@ -1,4 +1,4 @@
-const CACHE_NAME = "solara-v14-source-menu";
+const CACHE_NAME = "solara-v15-recent-100";
 const SHELL = ["/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {

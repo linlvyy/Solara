@@ -710,6 +710,7 @@ const savedPlaylistSongs = (() => {
 
 const RECENT_PLAYLIST_ID = "default";
 const RECENT_PLAYLIST_NAME = "最近播放";
+const RECENT_PLAYLIST_LIMIT = 100;
 
 function normalizeNamedPlaylistCollection(playlists, fallbackSongs = []) {
     const normalized = (Array.isArray(playlists) ? playlists : [])
@@ -1149,6 +1150,7 @@ const state = {
     isResolvingAudio: false,
     audioPlaybackEstablished: false,
     lastAudioRecoveryAt: 0,
+    recentPlaybackRequestId: null,
     userScrolledLyrics: false, // 新增：用户是否手动滚动歌词
     lyricsScrollTimeout: null, // 新增：歌词滚动超时
     themeDefaultsCaptured: false,
@@ -4031,6 +4033,10 @@ function setupInteractions() {
     dom.audioPlayer.addEventListener("play", updatePlayPauseButton);
     dom.audioPlayer.addEventListener("playing", () => {
         state.audioPlaybackEstablished = true;
+        if (state.currentSong && state.recentPlaybackRequestId !== playbackRequestSerial) {
+            state.recentPlaybackRequestId = playbackRequestSerial;
+            recordRecentPlayback(state.currentSong);
+        }
     });
     dom.audioPlayer.addEventListener("pause", updatePlayPauseButton);
     dom.audioPlayer.addEventListener("volumechange", onAudioVolumeChange);
@@ -5088,10 +5094,14 @@ function recordRecentPlayback(song) {
         recentSongs.splice(duplicateIndex, 1);
     }
     recentSongs.unshift(normalizedSong);
+    recentSongs.splice(RECENT_PLAYLIST_LIMIT);
     recentPlaylist.songs = recentSongs;
 
     if (recentPlaylist.id === state.activeNamedPlaylistId) {
         state.playlistSongs = recentSongs.slice();
+        if (state.currentPlaylist === "playlist") {
+            state.currentTrackIndex = 0;
+        }
         renderPlaylist();
     }
 
@@ -5099,8 +5109,7 @@ function recordRecentPlayback(song) {
     saveNamedPlaylists();
 }
 
-// 播放搜索结果：保留搜索界面，使用当前搜索结果作为临时播放队列，
-// 并在成功开始播放后将歌曲记录到“最近播放”。
+// 播放搜索结果：保留搜索界面，并使用当前搜索结果作为临时播放队列。
 async function playSearchResult(index) {
     const song = state.searchResults[index];
     if (!song) return;
@@ -5111,7 +5120,6 @@ async function playSearchResult(index) {
         state.currentList = "playlist";
 
         await playSong(song);
-        recordRecentPlayback(song);
         updatePlaylistHighlight();
         updatePlayModeUI();
 
