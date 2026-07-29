@@ -557,7 +557,7 @@ body.mobile-view .mobile-overlay-scrim {
 }
 
 body.mobile-view.mobile-panel-open .mobile-overlay-scrim {
-    opacity: 1;
+    opacity: 0;
 }
 
 body.mobile-view .mobile-panel {
