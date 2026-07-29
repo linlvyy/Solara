@@ -1,4 +1,4 @@
-const CACHE_NAME = "solara-v19-joox-deep-musicbrainz";
+const CACHE_NAME = "solara-v20-quality-fallback";
 const SHELL = ["/css/style.css", "/css/desktop.css", "/css/mobile.css", "/js/index.js", "/js/mobile.js", "/js/i18n.js", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {

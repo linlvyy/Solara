@@ -6337,13 +6337,18 @@ function updatePlaylistHighlight() {
 }
 
 // 修复：播放歌曲函数 - 支持统一播放列表
-function waitForAudioReady(player) {
+function waitForAudioReady(player, timeoutMs = 12000) {
     if (!player) return Promise.resolve();
     if (player.readyState >= 1) {
         return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
+        let timeoutId = null;
         const cleanup = () => {
+            if (timeoutId !== null) {
+                window.clearTimeout(timeoutId);
+                timeoutId = null;
+            }
             player.removeEventListener('loadedmetadata', onLoaded);
             player.removeEventListener('error', onError);
         };
@@ -6357,7 +6362,18 @@ function waitForAudioReady(player) {
         };
         player.addEventListener('loadedmetadata', onLoaded, { once: true });
         player.addEventListener('error', onError, { once: true });
+        timeoutId = window.setTimeout(() => {
+            cleanup();
+            reject(new Error('音频加载超时'));
+        }, timeoutMs);
     });
+}
+
+function getPlaybackQualityFallbacks(requestedQuality) {
+    const qualityOrder = ["999", "320", "192", "128"];
+    const normalized = normalizeQuality(requestedQuality);
+    const startIndex = qualityOrder.indexOf(normalized);
+    return startIndex >= 0 ? qualityOrder.slice(startIndex) : ["320", "192", "128"];
 }
 
 async function playSong(song, options = {}) {
@@ -6387,33 +6403,7 @@ async function playSong(song, options = {}) {
         updateCurrentSongInfo(song, { loadArtwork: false });
 
         const quality = state.playbackQuality || '320';
-        let audioUrl = API.getSongUrl(song, quality);
-        if (isRetry) {
-            audioUrl += '&nocache=true';
-        }
-        debugLog(`获取音频URL: ${audioUrl}`);
-
-        const audioData = await API.fetchJson(audioUrl);
-        if (!isCurrentPlaybackRequest()) return;
-
-        if (!audioData || !audioData.url) {
-            throw new Error('无法获取音频播放地址');
-        }
-
-        const originalAudioUrl = audioData.url;
-        const proxiedAudioUrl = buildAudioProxyUrl(originalAudioUrl);
-        const preferredAudioUrl = preferHttpsUrl(originalAudioUrl);
-        const candidateAudioUrls = Array.from(
-            new Set([proxiedAudioUrl, preferredAudioUrl, originalAudioUrl].filter(Boolean))
-        );
-
-        const primaryAudioUrl = candidateAudioUrls[0] || originalAudioUrl;
-
-        if (proxiedAudioUrl && proxiedAudioUrl !== originalAudioUrl) {
-            debugLog(`音频地址已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
-        } else if (preferredAudioUrl && preferredAudioUrl !== originalAudioUrl) {
-            debugLog(`音频地址由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
-        }
+        const qualityFallbacks = getPlaybackQualityFallbacks(quality);
 
         state.currentSong = song;
         state.currentAudioUrl = null;
@@ -6443,29 +6433,74 @@ async function playSong(song, options = {}) {
         state.pendingSeekTime = startTime > 0 ? startTime : null;
 
         let selectedAudioUrl = null;
+        let selectedQuality = null;
         let lastAudioError = null;
         let usedFallbackAudio = false;
 
-        for (const candidateUrl of candidateAudioUrls) {
+        for (const candidateQuality of qualityFallbacks) {
             if (!isCurrentPlaybackRequest()) return;
-            dom.audioPlayer.src = candidateUrl;
-            dom.audioPlayer.load();
 
+            let audioUrl = API.getSongUrl(song, candidateQuality);
+            if (isRetry) {
+                audioUrl += '&nocache=true';
+            }
+            debugLog(`获取音频URL: ${audioUrl}`);
+
+            let audioData;
             try {
-                await waitForAudioReady(dom.audioPlayer);
-                if (!isCurrentPlaybackRequest()) return;
-                selectedAudioUrl = candidateUrl;
-                usedFallbackAudio = candidateUrl !== primaryAudioUrl && candidateAudioUrls.length > 1;
-                break;
+                audioData = await API.fetchJson(audioUrl);
             } catch (error) {
                 if (!isCurrentPlaybackRequest()) return;
                 lastAudioError = error;
-                console.warn('音频元数据加载异常', error);
+                console.warn(`获取 ${candidateQuality} 音质地址失败`, error);
+                continue;
+            }
 
-                if (candidateUrl === primaryAudioUrl && candidateAudioUrls.length > 1) {
-                    debugLog('主音频地址加载失败，尝试使用备用地址');
+            if (!audioData || !audioData.url) {
+                lastAudioError = new Error(`${candidateQuality} 音质暂无播放地址`);
+                debugLog(`${candidateQuality} 音质暂无播放地址，尝试较低音质`);
+                continue;
+            }
+
+            const originalAudioUrl = audioData.url;
+            const proxiedAudioUrl = buildAudioProxyUrl(originalAudioUrl);
+            const preferredAudioUrl = preferHttpsUrl(originalAudioUrl);
+            const candidateAudioUrls = Array.from(
+                new Set([proxiedAudioUrl, preferredAudioUrl, originalAudioUrl].filter(Boolean))
+            );
+            const primaryAudioUrl = candidateAudioUrls[0] || originalAudioUrl;
+
+            if (proxiedAudioUrl && proxiedAudioUrl !== originalAudioUrl) {
+                debugLog(`音频地址已通过代理转换为 HTTPS: ${proxiedAudioUrl}`);
+            } else if (preferredAudioUrl && preferredAudioUrl !== originalAudioUrl) {
+                debugLog(`音频地址由 HTTP 升级为 HTTPS: ${preferredAudioUrl}`);
+            }
+
+            for (const candidateUrl of candidateAudioUrls) {
+                if (!isCurrentPlaybackRequest()) return;
+                dom.audioPlayer.src = candidateUrl;
+                dom.audioPlayer.load();
+
+                try {
+                    await waitForAudioReady(dom.audioPlayer);
+                    if (!isCurrentPlaybackRequest()) return;
+                    selectedAudioUrl = candidateUrl;
+                    selectedQuality = candidateQuality;
+                    usedFallbackAudio = candidateUrl !== primaryAudioUrl && candidateAudioUrls.length > 1;
+                    break;
+                } catch (error) {
+                    if (!isCurrentPlaybackRequest()) return;
+                    lastAudioError = error;
+                    console.warn(`${candidateQuality} 音质元数据加载异常`, error);
+
+                    if (candidateUrl === primaryAudioUrl && candidateAudioUrls.length > 1) {
+                        debugLog('主音频地址加载失败，尝试使用备用地址');
+                    }
                 }
             }
+
+            if (selectedAudioUrl) break;
+            debugLog(`${candidateQuality} 音质不可播放，尝试较低音质`);
         }
 
         if (!selectedAudioUrl) {
@@ -6475,6 +6510,12 @@ async function playSong(song, options = {}) {
         if (usedFallbackAudio) {
             debugLog(`已回退至备用音频地址: ${selectedAudioUrl}`);
             showNotification('主音频加载失败，已切换到备用音源', 'warning');
+        }
+        if (selectedQuality && selectedQuality !== quality) {
+            const fallbackOption = QUALITY_OPTIONS.find(item => item.value === selectedQuality);
+            const fallbackLabel = fallbackOption?.label || `${selectedQuality} kbps`;
+            debugLog(`当前歌曲不支持 ${quality} 音质，已自动降至 ${selectedQuality}`);
+            showNotification(`当前歌曲没有所选音质，已自动使用${fallbackLabel}`, 'warning');
         }
 
         state.currentAudioUrl = selectedAudioUrl;
@@ -6517,7 +6558,7 @@ async function playSong(song, options = {}) {
 
         scheduleDeferredSongAssets(song, playPromise, playbackRequestId);
 
-        debugLog(`开始播放: ${song.name} @${quality}`);
+        debugLog(`开始播放: ${song.name} @${selectedQuality || quality}`);
 
         if (typeof window.__SOLARA_UPDATE_MEDIA_METADATA === 'function') {
             window.__SOLARA_UPDATE_MEDIA_METADATA();
