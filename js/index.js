@@ -684,6 +684,11 @@ const SOURCE_OPTIONS = [
     { value: "netease", label: "网易云音乐" }
 ];
 
+const JOOX_DEEP_SEARCH_PAGE_SIZE = 12;
+const ITUNES_SEARCH_BASE_URL = "https://itunes.apple.com";
+const itunesArtistCatalogCache = new Map();
+const jooxCatalogResolutionCache = new Map();
+
 function normalizeSource(value) {
     const allowed = SOURCE_OPTIONS.map(option => option.value);
     return allowed.includes(value) ? value : SOURCE_OPTIONS[0].value;
@@ -1036,6 +1041,147 @@ const API = {
             .slice(0, resultLimit);
     },
 
+    searchJooxDeep: async (keyword, checkedTrackIds = new Set(), excludedSongs = []) => {
+        const artistCacheKey = normalizeSearchIdentityText(keyword);
+        let catalog = itunesArtistCatalogCache.get(artistCacheKey);
+
+        if (!catalog) {
+            const artistParams = new URLSearchParams({
+                term: keyword,
+                country: "tw",
+                media: "music",
+                entity: "musicArtist",
+                limit: "10",
+            });
+            const artistResponse = await fetch(`${ITUNES_SEARCH_BASE_URL}/search?${artistParams.toString()}`, {
+                headers: { Accept: "application/json" },
+            });
+            if (!artistResponse.ok) {
+                throw new Error(`Apple 目录歌手搜索失败 (${artistResponse.status})`);
+            }
+            const artistData = await artistResponse.json();
+            const artists = Array.isArray(artistData?.results) ? artistData.results : [];
+            if (artists.length === 0) {
+                return { results: [], hasMore: false, total: 0 };
+            }
+
+            const queryKey = normalizeSearchIdentityText(keyword);
+            const artist = artists.find((item) => normalizeSearchIdentityText(item.artistName) === queryKey)
+                || artists[0];
+            if (!artist?.artistId || !artist?.artistName) {
+                return { results: [], hasMore: false, total: 0 };
+            }
+
+            const lookupParams = new URLSearchParams({
+                id: String(artist.artistId),
+                country: "tw",
+                media: "music",
+                entity: "song",
+                limit: "200",
+            });
+            const lookupResponse = await fetch(`${ITUNES_SEARCH_BASE_URL}/lookup?${lookupParams.toString()}`, {
+                headers: { Accept: "application/json" },
+            });
+            if (!lookupResponse.ok) {
+                throw new Error(`Apple 目录歌曲读取失败 (${lookupResponse.status})`);
+            }
+            const lookupData = await lookupResponse.json();
+            const seenCatalogTracks = new Set();
+            const tracks = (Array.isArray(lookupData?.results) ? lookupData.results : [])
+                .filter((item) => item?.wrapperType === "track" && item?.trackName)
+                .filter((item) => {
+                    const identity = `${normalizeSearchIdentityText(item.trackName)}::${normalizeSearchIdentityText(item.collectionName)}`;
+                    if (!identity || seenCatalogTracks.has(identity)) return false;
+                    seenCatalogTracks.add(identity);
+                    return true;
+                });
+
+            catalog = {
+                artistName: artist.artistName,
+                tracks,
+            };
+            itunesArtistCatalogCache.set(artistCacheKey, catalog);
+        }
+
+        const excludedTitles = new Set(
+            (Array.isArray(excludedSongs) ? excludedSongs : [])
+                .map((song) => normalizeSearchIdentityText(song?.name))
+                .filter(Boolean)
+        );
+        const remainingTracks = catalog.tracks.filter((track) => {
+            const trackId = String(track.trackId || "");
+            if (trackId && checkedTrackIds.has(trackId)) return false;
+            return !excludedTitles.has(normalizeSearchIdentityText(track.trackName));
+        });
+        const catalogTracks = remainingTracks.slice(0, JOOX_DEEP_SEARCH_PAGE_SIZE);
+        if (catalogTracks.length === 0) {
+            return { results: [], hasMore: false, total: catalog.tracks.length };
+        }
+        catalogTracks.forEach((track) => {
+            if (track.trackId) checkedTrackIds.add(String(track.trackId));
+        });
+
+        const resolveTrack = async (track) => {
+            const resolutionKey = `${normalizeSearchIdentityText(catalog.artistName)}::${normalizeSearchIdentityText(track.trackName)}`;
+            if (jooxCatalogResolutionCache.has(resolutionKey)) {
+                return jooxCatalogResolutionCache.get(resolutionKey);
+            }
+
+            const candidates = await API.search(`${track.trackName} ${catalog.artistName}`, "joox", 30, 1);
+            const targetTitle = normalizeSearchIdentityText(track.trackName);
+            const targetArtist = normalizeSearchIdentityText(catalog.artistName);
+            const targetAlbum = normalizeSearchIdentityText(track.collectionName);
+            const stripVersion = (value) => normalizeSearchIdentityText(
+                String(value || "").replace(
+                    /[（(][^）)]*(?:live|現場|现场|bonus|remaster|伴奏|demo|feat\.?|featuring|with|合作)[^）)]*[）)]/gi,
+                    ""
+                )
+            );
+            const baseTargetTitle = stripVersion(track.trackName);
+
+            let bestMatch = null;
+            let bestScore = 0;
+            candidates.forEach((candidate) => {
+                const candidateTitle = normalizeSearchIdentityText(candidate.name);
+                const candidateBaseTitle = stripVersion(candidate.name);
+                const artistText = normalizeSearchIdentityText(
+                    Array.isArray(candidate.artist) ? candidate.artist.join(" ") : candidate.artist
+                );
+                if (!artistText.includes(targetArtist) && !targetArtist.includes(artistText)) return;
+
+                let score = 0;
+                if (candidateTitle === targetTitle) score += 120;
+                else if (candidateBaseTitle && candidateBaseTitle === baseTargetTitle) score += 90;
+                else return;
+                if (targetAlbum && normalizeSearchIdentityText(candidate.album) === targetAlbum) score += 20;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatch = {
+                        ...candidate,
+                        catalog_source: "itunes",
+                        catalog_track_id: String(track.trackId || ""),
+                    };
+                }
+            });
+
+            jooxCatalogResolutionCache.set(resolutionKey, bestMatch);
+            return bestMatch;
+        };
+
+        const resolved = [];
+        for (let index = 0; index < catalogTracks.length; index += 4) {
+            const batch = catalogTracks.slice(index, index + 4);
+            const matches = await Promise.all(batch.map(resolveTrack));
+            resolved.push(...matches.filter(Boolean));
+        }
+
+        return {
+            results: resolved,
+            hasMore: remainingTracks.length > catalogTracks.length,
+            total: catalog.tracks.length,
+        };
+    },
+
     getRadarPlaylist: async (playlistId = "3778678", options = {}) => {
         const signature = API.generateSignature();
 
@@ -1119,6 +1265,7 @@ const state = {
     currentLyricLine: -1,
     currentPlaylist: savedCurrentPlaylist, // 'online', 'search', or 'playlist'
     searchPage: savedSearchStateMatchesSource ? savedLastSearchState.page : 1,
+    jooxDeepCheckedTrackIds: new Set(),
     searchKeyword: savedSearchStateMatchesSource ? savedLastSearchState.keyword : "",
     searchSource: savedSearchSource,
     hasMoreResults: savedSearchStateMatchesSource ? savedLastSearchState.hasMore : true,
@@ -3461,6 +3608,7 @@ function selectSearchSource(source) {
     state.searchKeyword = "";
     state.searchPage = 1;
     state.searchResults = [];
+    state.jooxDeepCheckedTrackIds = new Set();
     state.hasMoreResults = true;
     state.renderedSearchCount = 0;
     resetSelectedSearchResults();
@@ -4520,6 +4668,7 @@ async function performSearch(isLiveSearch = false) {
         state.searchKeyword = query;
         state.searchSource = source;
         state.searchResults = [];
+        state.jooxDeepCheckedTrackIds = new Set();
         state.hasMoreResults = true;
         state.renderedSearchCount = 0;
         resetSelectedSearchResults();
@@ -4552,7 +4701,7 @@ async function performSearch(isLiveSearch = false) {
             state.searchResults = [...state.searchResults, ...results];
         }
 
-        state.hasMoreResults = source !== "joox" && results.length > 0;
+        state.hasMoreResults = results.length > 0;
 
         // 显示搜索结果
         displaySearchResults(results, {
@@ -4594,25 +4743,49 @@ async function loadMoreResults() {
 
     try {
         loadMoreBtn.disabled = true;
-        loadMoreBtn.innerHTML = '<span class="loader"></span><span>加载中...</span>';
+        const source = normalizeSource(state.searchSource);
+        loadMoreBtn.innerHTML = source === "joox"
+            ? '<span class="loader"></span><span>JOOX 深度匹配中...</span>'
+            : '<span class="loader"></span><span>加载中...</span>';
 
         state.searchPage++;
         debugLog(`加载第 ${state.searchPage} 页结果`);
 
-        const source = normalizeSource(state.searchSource);
         state.searchSource = source;
         safeSetLocalStorage("searchSource", source);
-        const results = await API.search(state.searchKeyword, source, 20, state.searchPage);
+        let results;
+        let hasMore;
+        if (source === "joox") {
+            const deepSearch = await API.searchJooxDeep(
+                state.searchKeyword,
+                state.jooxDeepCheckedTrackIds,
+                state.searchResults
+            );
+            results = deepSearch.results;
+            hasMore = deepSearch.hasMore;
+            debugLog(`JOOX 深度搜索: Apple 目录共 ${deepSearch.total} 首，本批匹配 ${results.length} 首`);
+        } else {
+            results = await API.search(state.searchKeyword, source, 20, state.searchPage);
+            hasMore = results.length > 0;
+        }
         const uniqueResults = mergeUniqueSearchResults(state.searchResults, results);
 
         if (uniqueResults.length > 0) {
             state.searchResults = [...state.searchResults, ...uniqueResults];
-            state.hasMoreResults = results.length > 0 && source !== "joox";
+            state.hasMoreResults = hasMore;
             displaySearchResults(uniqueResults, {
                 totalCount: state.searchResults.length,
             });
             persistLastSearchState();
             debugLog(`加载完成: 接口返回 ${results.length} 个，去重后新增 ${uniqueResults.length} 个结果`);
+        } else if (source === "joox" && hasMore) {
+            state.hasMoreResults = true;
+            showNotification("本批没有新的 JOOX 匹配，可继续加载下一批", "warning");
+            persistLastSearchState();
+            displaySearchResults([], {
+                totalCount: state.searchResults.length,
+            });
+            debugLog("JOOX 本批匹配结果均已存在或没有精确匹配");
         } else {
             state.hasMoreResults = false;
             showNotification("没有更多结果了");
@@ -4629,7 +4802,8 @@ async function loadMoreResults() {
     } finally {
         if (loadMoreBtn) {
             loadMoreBtn.disabled = false;
-            loadMoreBtn.innerHTML = "<i class=\"fas fa-plus\"></i><span>加载更多</span>";
+            const label = normalizeSource(state.searchSource) === "joox" ? "深度加载更多" : "加载更多";
+            loadMoreBtn.innerHTML = `<i class="fas fa-plus"></i><span>${label}</span>`;
         }
     }
 }
@@ -4931,7 +5105,8 @@ function createLoadMoreButton() {
     button.id = "loadMoreBtn";
     button.className = "load-more-btn";
     button.type = "button";
-    button.innerHTML = '<i class="fas fa-plus"></i><span>加载更多</span>';
+    const label = normalizeSource(state.searchSource) === "joox" ? "深度加载更多" : "加载更多";
+    button.innerHTML = `<i class="fas fa-plus"></i><span>${label}</span>`;
     button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
