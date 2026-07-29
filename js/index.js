@@ -685,7 +685,6 @@ const SOURCE_OPTIONS = [
 ];
 
 const JOOX_DEEP_SEARCH_PAGE_SIZE = 12;
-const ITUNES_SEARCH_BASE_URL = "https://itunes.apple.com";
 const itunesArtistCatalogCache = new Map();
 const jooxCatalogResolutionCache = new Map();
 
@@ -1046,59 +1045,20 @@ const API = {
         let catalog = itunesArtistCatalogCache.get(artistCacheKey);
 
         if (!catalog) {
-            const artistParams = new URLSearchParams({
-                term: keyword,
-                country: "tw",
-                media: "music",
-                entity: "musicArtist",
-                limit: "10",
-            });
-            const artistResponse = await fetch(`${ITUNES_SEARCH_BASE_URL}/search?${artistParams.toString()}`, {
+            const catalogResponse = await fetch(`/api/catalog?artist=${encodeURIComponent(keyword)}`, {
                 headers: { Accept: "application/json" },
             });
-            if (!artistResponse.ok) {
-                throw new Error(`Apple 目录歌手搜索失败 (${artistResponse.status})`);
+            const catalogData = await catalogResponse.json().catch(() => ({}));
+            if (!catalogResponse.ok) {
+                throw new Error(catalogData?.error || `深度目录读取失败 (${catalogResponse.status})`);
             }
-            const artistData = await artistResponse.json();
-            const artists = Array.isArray(artistData?.results) ? artistData.results : [];
-            if (artists.length === 0) {
+            if (!catalogData?.artistName || !Array.isArray(catalogData?.tracks) || catalogData.tracks.length === 0) {
                 return { results: [], hasMore: false, total: 0 };
             }
-
-            const queryKey = normalizeSearchIdentityText(keyword);
-            const artist = artists.find((item) => normalizeSearchIdentityText(item.artistName) === queryKey)
-                || artists[0];
-            if (!artist?.artistId || !artist?.artistName) {
-                return { results: [], hasMore: false, total: 0 };
-            }
-
-            const lookupParams = new URLSearchParams({
-                id: String(artist.artistId),
-                country: "tw",
-                media: "music",
-                entity: "song",
-                limit: "200",
-            });
-            const lookupResponse = await fetch(`${ITUNES_SEARCH_BASE_URL}/lookup?${lookupParams.toString()}`, {
-                headers: { Accept: "application/json" },
-            });
-            if (!lookupResponse.ok) {
-                throw new Error(`Apple 目录歌曲读取失败 (${lookupResponse.status})`);
-            }
-            const lookupData = await lookupResponse.json();
-            const seenCatalogTracks = new Set();
-            const tracks = (Array.isArray(lookupData?.results) ? lookupData.results : [])
-                .filter((item) => item?.wrapperType === "track" && item?.trackName)
-                .filter((item) => {
-                    const identity = `${normalizeSearchIdentityText(item.trackName)}::${normalizeSearchIdentityText(item.collectionName)}`;
-                    if (!identity || seenCatalogTracks.has(identity)) return false;
-                    seenCatalogTracks.add(identity);
-                    return true;
-                });
 
             catalog = {
-                artistName: artist.artistName,
-                tracks,
+                artistName: catalogData.artistName,
+                tracks: catalogData.tracks,
             };
             itunesArtistCatalogCache.set(artistCacheKey, catalog);
         }
