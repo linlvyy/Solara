@@ -15,7 +15,7 @@ function normalizeIdentity(value: unknown): string {
     .replace(/[\s\p{P}\p{S}]+/gu, "");
 }
 
-async function fetchAppleJson(url: URL): Promise<any> {
+async function fetchMusicBrainzJson(url: URL): Promise<any> {
   const response = await fetch(url.toString(), {
     headers: {
       Accept: "application/json",
@@ -23,7 +23,7 @@ async function fetchAppleJson(url: URL): Promise<any> {
     },
   });
   if (!response.ok) {
-    throw new Error(`Apple catalog returned ${response.status}`);
+    throw new Error(`MusicBrainz catalog returned ${response.status}`);
   }
   return response.json();
 }
@@ -36,54 +36,46 @@ export async function onRequestGet({ request }: { request: Request }): Promise<R
   }
 
   try {
-    const artistUrl = new URL("https://itunes.apple.com/search");
-    artistUrl.search = new URLSearchParams({
-      term: artistQuery,
-      country: "tw",
-      media: "music",
-      entity: "musicArtist",
-      limit: "10",
+    const recordingsUrl = new URL("https://musicbrainz.org/ws/2/recording/");
+    recordingsUrl.search = new URLSearchParams({
+      query: `artist:"${artistQuery.replace(/["\\]/g, " ")}"`,
+      fmt: "json",
+      limit: "100",
+      offset: "0",
     }).toString();
-    const artistData = await fetchAppleJson(artistUrl);
-    const artists = Array.isArray(artistData?.results) ? artistData.results : [];
-    if (artists.length === 0) {
+    const catalogData = await fetchMusicBrainzJson(recordingsUrl);
+    const recordings = Array.isArray(catalogData?.recordings) ? catalogData.recordings : [];
+    if (recordings.length === 0) {
       return jsonResponse({ artistName: "", tracks: [] });
     }
 
-    const queryIdentity = normalizeIdentity(artistQuery);
-    const artist = artists.find((item: any) => normalizeIdentity(item?.artistName) === queryIdentity)
-      || artists[0];
-    if (!artist?.artistId || !artist?.artistName) {
-      return jsonResponse({ artistName: "", tracks: [] });
-    }
-
-    const lookupUrl = new URL("https://itunes.apple.com/lookup");
-    lookupUrl.search = new URLSearchParams({
-      id: String(artist.artistId),
-      country: "tw",
-      media: "music",
-      entity: "song",
-      limit: "200",
-    }).toString();
-    const lookupData = await fetchAppleJson(lookupUrl);
+    const artistAliases = Array.from(new Set(
+      recordings.flatMap((item: any) =>
+        (Array.isArray(item?.["artist-credit"]) ? item["artist-credit"] : [])
+          .map((credit: any) => String(credit?.name || credit?.artist?.name || "").trim())
+          .filter(Boolean)
+      )
+    ));
     const seen = new Set<string>();
-    const tracks = (Array.isArray(lookupData?.results) ? lookupData.results : [])
-      .filter((item: any) => item?.wrapperType === "track" && item?.trackName)
+    const tracks = recordings
+      .filter((item: any) => item?.id && item?.title)
       .filter((item: any) => {
-        const identity = `${normalizeIdentity(item.trackName)}::${normalizeIdentity(item.collectionName)}`;
+        const identity = normalizeIdentity(item.title);
         if (!identity || seen.has(identity)) return false;
         seen.add(identity);
         return true;
       })
       .map((item: any) => ({
-        trackId: String(item.trackId || ""),
-        trackName: String(item.trackName || ""),
-        artistName: String(item.artistName || artist.artistName),
-        collectionName: String(item.collectionName || ""),
+        trackId: String(item.id || ""),
+        trackName: String(item.title || ""),
+        artistName: String(item?.["artist-credit"]?.[0]?.name || artistQuery),
+        collectionName: String(item?.releases?.[0]?.title || ""),
       }));
 
     return jsonResponse({
-      artistName: String(artist.artistName),
+      artistName: String(artistAliases[0] || artistQuery),
+      artistAliases,
+      total: Number(catalogData?.count || tracks.length),
       tracks,
     });
   } catch (error) {

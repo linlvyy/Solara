@@ -685,7 +685,7 @@ const SOURCE_OPTIONS = [
 ];
 
 const JOOX_DEEP_SEARCH_PAGE_SIZE = 12;
-const itunesArtistCatalogCache = new Map();
+const artistCatalogCache = new Map();
 const jooxCatalogResolutionCache = new Map();
 
 function normalizeSource(value) {
@@ -1042,7 +1042,7 @@ const API = {
 
     searchJooxDeep: async (keyword, checkedTrackIds = new Set(), excludedSongs = []) => {
         const artistCacheKey = normalizeSearchIdentityText(keyword);
-        let catalog = itunesArtistCatalogCache.get(artistCacheKey);
+        let catalog = artistCatalogCache.get(artistCacheKey);
 
         if (!catalog) {
             const catalogResponse = await fetch(`/api/catalog?artist=${encodeURIComponent(keyword)}`, {
@@ -1058,9 +1058,12 @@ const API = {
 
             catalog = {
                 artistName: catalogData.artistName,
+                artistAliases: Array.isArray(catalogData.artistAliases)
+                    ? catalogData.artistAliases.filter(Boolean)
+                    : [catalogData.artistName],
                 tracks: catalogData.tracks,
             };
-            itunesArtistCatalogCache.set(artistCacheKey, catalog);
+            artistCatalogCache.set(artistCacheKey, catalog);
         }
 
         const excludedTitles = new Set(
@@ -1087,9 +1090,13 @@ const API = {
                 return jooxCatalogResolutionCache.get(resolutionKey);
             }
 
-            const candidates = await API.search(`${track.trackName} ${catalog.artistName}`, "joox", 30, 1);
+            const candidates = await API.search(`${track.trackName} ${keyword}`, "joox", 30, 1);
             const targetTitle = normalizeSearchIdentityText(track.trackName);
-            const targetArtist = normalizeSearchIdentityText(catalog.artistName);
+            const targetArtists = new Set(
+                [...(catalog.artistAliases || []), catalog.artistName, track.artistName, keyword]
+                    .map(normalizeSearchIdentityText)
+                    .filter(Boolean)
+            );
             const targetAlbum = normalizeSearchIdentityText(track.collectionName);
             const stripVersion = (value) => normalizeSearchIdentityText(
                 String(value || "").replace(
@@ -1107,7 +1114,10 @@ const API = {
                 const artistText = normalizeSearchIdentityText(
                     Array.isArray(candidate.artist) ? candidate.artist.join(" ") : candidate.artist
                 );
-                if (!artistText.includes(targetArtist) && !targetArtist.includes(artistText)) return;
+                const artistMatches = [...targetArtists].some(
+                    (targetArtist) => artistText.includes(targetArtist) || targetArtist.includes(artistText)
+                );
+                if (!artistMatches) return;
 
                 let score = 0;
                 if (candidateTitle === targetTitle) score += 120;
