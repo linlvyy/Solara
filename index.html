@@ -24,23 +24,33 @@
     <script>
         (function () {
             const ua = navigator.userAgent || "";
-            const isMobileUA = /android|iphone|ipad|ipod|mobile|blackberry|phone|opera mini|windows phone/i.test(ua);
-            const isSmallScreen = typeof window.matchMedia === "function" && window.matchMedia("(max-width: 820px)").matches;
             const hasTouch = (navigator.maxTouchPoints || 0) > 0
                 || (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches);
-            const screenWidth = Math.min(
+            const screenShortSide = Math.min(
                 Number(window.screen?.width) || Number.POSITIVE_INFINITY,
                 Number(window.screen?.height) || Number.POSITIVE_INFINITY
             );
-            const isCompactTouchScreen = hasTouch && screenWidth <= 1024;
-            const isAppleDesktopUA = /macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1;
-            const isMobile = isMobileUA || isSmallScreen || isCompactTouchScreen || isAppleDesktopUA;
+            const isTouchMac = /macintosh/i.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+            const isTabletUA = /ipad|tablet|playbook|silk/i.test(ua)
+                || isTouchMac
+                || (/android/i.test(ua) && !/mobile/i.test(ua));
+            const isPhoneUA = !isTabletUA
+                && /android|iphone|ipod|mobile|blackberry|phone|opera mini|windows phone/i.test(ua);
+            const isNarrowViewport = typeof window.matchMedia === "function"
+                && window.matchMedia("(max-width: 680px)").matches;
+            const isPhoneSizedTouchScreen = hasTouch && screenShortSide <= 600;
+            const isMobile = isNarrowViewport || (!isTabletUA && (isPhoneUA || isPhoneSizedTouchScreen));
+            const isTablet = !isMobile && hasTouch && (isTabletUA || screenShortSide <= 1024);
             window.__SOLARA_IS_MOBILE = isMobile;
+            window.__SOLARA_IS_TABLET = isTablet;
             if (!isMobile) {
                 document.documentElement.classList.add("desktop-view");
+                if (isTablet) {
+                    document.documentElement.classList.add("tablet-view");
+                }
                 const desktopLink = document.createElement("link");
                 desktopLink.rel = "stylesheet";
-                desktopLink.href = "css/desktop.css?v=20260726-fallback10";
+                desktopLink.href = "css/desktop.css?v=20260729-tablet1";
                 desktopLink.id = "desktopStylesheet";
                 document.head.appendChild(desktopLink);
                 return;

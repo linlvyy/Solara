@@ -138,3 +138,73 @@ html.desktop-view .search-results-list {
 html.desktop-view .search-results {
     gap: 0;
 }
+
+/* Full-size tablets use the desktop information layout without looking like
+   a narrow phone card. Narrow split-screen windows still use mobile mode. */
+html.tablet-view body {
+    padding: max(12px, env(safe-area-inset-top))
+             max(12px, env(safe-area-inset-right))
+             max(12px, env(safe-area-inset-bottom))
+             max(12px, env(safe-area-inset-left));
+    align-items: center;
+}
+
+html.tablet-view .container {
+    box-sizing: border-box;
+    width: 100%;
+    height: min(900px, calc(100dvh - 24px));
+    max-height: none;
+    aspect-ratio: auto;
+    padding: clamp(16px, 2.6vw, 26px);
+    gap: clamp(12px, 2vw, 20px);
+    grid-template-columns: minmax(160px, 0.75fr) minmax(220px, 1fr) minmax(220px, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) 76px;
+}
+
+html.tablet-view .login-shell {
+    width: min(520px, 100%);
+}
+
+html.tablet-view .cover-area,
+html.tablet-view .playlist,
+html.tablet-view .lyrics {
+    padding-left: clamp(12px, 2vw, 20px);
+    padding-right: clamp(12px, 2vw, 20px);
+}
+
+html.tablet-view .album-cover {
+    width: min(200px, 100%);
+    min-height: 0;
+    aspect-ratio: 1;
+}
+
+html.tablet-view .controls {
+    grid-template-columns: minmax(220px, 0.9fr) minmax(180px, 1fr) auto;
+    column-gap: clamp(10px, 2vw, 20px);
+}
+
+html.tablet-view .controls button,
+html.tablet-view .playlist-action-btn,
+html.tablet-view .named-playlist-select,
+html.tablet-view .account-badge {
+    touch-action: manipulation;
+}
+
+@media (orientation: portrait) and (max-width: 900px) {
+    html.tablet-view .container {
+        grid-template-columns: minmax(150px, 0.72fr) minmax(210px, 1fr) minmax(200px, 0.95fr);
+    }
+
+    html.tablet-view .header h1 {
+        font-size: 1.8em;
+    }
+
+    html.tablet-view .search-area {
+        padding: 16px;
+    }
+
+    html.tablet-view .playlist,
+    html.tablet-view .lyrics {
+        font-size: 0.92rem;
+    }
+}
