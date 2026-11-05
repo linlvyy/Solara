@@ -2888,11 +2888,11 @@ const playModeIcons = {
 };
 
 function getActivePlayMode() {
-    return state.currentPlaylist === "favorites" ? state.favoritePlayMode : state.playMode;
+    return state.currentList === "favorite" ? state.favoritePlayMode : state.playMode;
 }
 
 function getLastNonRandomMode() {
-    if (state.currentPlaylist === "favorites") {
+    if (state.currentList === "favorite") {
         return state.favoriteLastNonRandomMode || "list";
     }
     return state.playlistLastNonRandomMode || "list";
@@ -2904,7 +2904,7 @@ function rememberLastNonRandomMode() {
         return;
     }
     const mode = currentMode || "list";
-    if (state.currentPlaylist === "favorites") {
+    if (state.currentList === "favorite") {
         state.favoriteLastNonRandomMode = mode;
     } else {
         state.playlistLastNonRandomMode = mode;
@@ -2940,7 +2940,7 @@ function setPlayMode(mode, { announce = true } = {}) {
     if (!validModes.includes(mode)) {
         return getActivePlayMode();
     }
-    const isFavoriteList = state.currentPlaylist === "favorites";
+    const isFavoriteList = state.currentList === "favorite";
     const key = isFavoriteList ? "favoritePlayMode" : "playMode";
     const previousMode = state[key];
     if (previousMode === mode) {
@@ -6089,7 +6089,7 @@ function fetchPlaybackUrlData(song, quality, { nocache = false } = {}) {
 }
 
 function getPlaybackQueueContext() {
-    if (state.currentPlaylist === 'favorites') {
+    if (state.currentList === 'favorite') {
         return {
             kind: 'favorite',
             songs: ensureFavoriteSongsArray(),
@@ -6134,7 +6134,7 @@ function getNextPlaybackTarget() {
     }
 
     const index = context.mode === 'random'
-        ? chooseRandomQueueIndex(context.songs.length, context.index)
+        ? Math.floor(Math.random() * context.songs.length)
         : (context.index + 1) % context.songs.length;
     const song = context.songs[index];
     if (!song) return null;
@@ -6148,13 +6148,6 @@ function getNextPlaybackTarget() {
         index,
         song,
     };
-}
-
-function chooseRandomQueueIndex(length, currentIndex) {
-    if (length <= 1) return 0;
-    const index = Math.floor(Math.random() * length);
-    if (index !== currentIndex) return index;
-    return (currentIndex + 1 + Math.floor(Math.random() * (length - 1))) % length;
 }
 
 function prefetchNextPlaybackUrl() {
@@ -6485,7 +6478,7 @@ function playNext(options = {}) {
         prefetchedNextPlayback = null;
     }
 
-    if (state.currentPlaylist === "favorites") {
+    if (state.currentList === "favorite") {
         const favorites = ensureFavoriteSongsArray();
         if (favorites.length === 0) {
             clearLyricsIfLibraryEmpty();
@@ -6496,7 +6489,7 @@ function playNext(options = {}) {
         if (cachedNextTarget && cachedNextTarget.kind === 'favorite') {
             nextIndex = cachedNextTarget.index;
         } else if (mode === "random") {
-            nextIndex = chooseRandomQueueIndex(favorites.length, state.currentFavoriteIndex);
+            nextIndex = Math.floor(Math.random() * favorites.length);
         } else if (mode === "list") {
             nextIndex = (state.currentFavoriteIndex + 1) % favorites.length;
         }
@@ -6531,7 +6524,7 @@ function playNext(options = {}) {
         nextIndex = cachedNextTarget.index;
     } else if (mode === "random") {
         // 随机播放
-        nextIndex = chooseRandomQueueIndex(playlist.length, state.currentTrackIndex);
+        nextIndex = Math.floor(Math.random() * playlist.length);
     } else if (mode === "list") {
         // 列表循环
         nextIndex = (state.currentTrackIndex + 1) % playlist.length;
@@ -6558,7 +6551,7 @@ function playNext(options = {}) {
 
 // 修复：播放上一首 - 支持播放模式和统一播放列表
 function playPrevious() {
-    if (state.currentPlaylist === "favorites") {
+    if (state.currentList === "favorite") {
         const favorites = ensureFavoriteSongsArray();
         if (favorites.length === 0) {
             return;
@@ -6566,7 +6559,7 @@ function playPrevious() {
         const mode = state.favoritePlayMode || "list";
         let prevIndex = state.currentFavoriteIndex;
         if (mode === "random") {
-            prevIndex = chooseRandomQueueIndex(favorites.length, state.currentFavoriteIndex);
+            prevIndex = Math.floor(Math.random() * favorites.length);
         } else if (mode === "list") {
             prevIndex = state.currentFavoriteIndex - 1;
             if (prevIndex < 0) {
@@ -6596,7 +6589,7 @@ function playPrevious() {
     const mode = state.playMode || "list";
     if (mode === "random") {
         // 随机播放
-        prevIndex = chooseRandomQueueIndex(playlist.length, state.currentTrackIndex);
+        prevIndex = Math.floor(Math.random() * playlist.length);
     } else if (mode === "list") {
         // 列表循环
         prevIndex = state.currentTrackIndex - 1;
