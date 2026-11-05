@@ -4988,7 +4988,7 @@ function recordRecentPlayback(song) {
 }
 
 // 播放搜索结果：保留搜索界面，并使用当前搜索结果作为临时播放队列。
-async function playSearchResult(index, playbackOptions = {}) {
+async function playSearchResult(index) {
     const song = state.searchResults[index];
     if (!song) return;
 
@@ -4997,7 +4997,7 @@ async function playSearchResult(index, playbackOptions = {}) {
         state.currentPlaylist = "search";
         state.currentList = "playlist";
 
-        await playSong(song, playbackOptions);
+        await playSong(song);
         updatePlaylistHighlight();
         updatePlayModeUI();
 
@@ -5686,7 +5686,7 @@ function toggleFavorite(song) {
     }
 }
 
-async function playFavoriteSong(index, playbackOptions = {}) {
+async function playFavoriteSong(index) {
     const favorites = ensureFavoriteSongsArray();
     if (index < 0 || index >= favorites.length) {
         return;
@@ -5698,7 +5698,7 @@ async function playFavoriteSong(index, playbackOptions = {}) {
     state.currentPlaylist = "favorites";
 
     try {
-        await playSong(song, playbackOptions);
+        await playSong(song);
         updateFavoriteHighlight();
         updatePlayModeUI();
         saveFavoriteState();
@@ -5994,7 +5994,7 @@ function clearPlaylist() {
 }
 
 // 新增：播放播放列表中的歌曲
-async function playPlaylistSong(index, playbackOptions = {}) {
+async function playPlaylistSong(index) {
     if (index < 0 || index >= state.playlistSongs.length) return;
 
     const song = state.playlistSongs[index];
@@ -6003,7 +6003,7 @@ async function playPlaylistSong(index, playbackOptions = {}) {
     state.currentList = "playlist";
 
     try {
-        await playSong(song, playbackOptions);
+        await playSong(song);
         updatePlaylistHighlight();
         updatePlayModeUI();
         if (isMobileView) {
@@ -6026,161 +6026,6 @@ function updatePlaylistHighlight() {
         item.setAttribute("aria-pressed", isCurrent ? "true" : "false");
     });
 }
-
-// 当前歌曲播放时提前解析队列下一首的播放地址，避免移动浏览器后台挂起时
-// 在 ended 事件里才发起网络请求，导致切回页面后才开始切歌。
-const playbackUrlCache = new Map();
-const playbackUrlRequests = new Map();
-const PLAYBACK_URL_CACHE_TTL = 5 * 60 * 1000;
-let prefetchedNextPlayback = null;
-
-function getPlaybackUrlCacheKey(song, quality) {
-    const songKey = getSongKey(song);
-    return songKey ? `${songKey}|${quality}` : null;
-}
-
-function getCachedPlaybackUrl(song, quality) {
-    const key = getPlaybackUrlCacheKey(song, quality);
-    if (!key) return null;
-
-    const cached = playbackUrlCache.get(key);
-    if (!cached) return null;
-    if (cached.expiresAt <= Date.now()) {
-        playbackUrlCache.delete(key);
-        return null;
-    }
-    return cached.data;
-}
-
-function fetchPlaybackUrlData(song, quality, { nocache = false } = {}) {
-    const key = getPlaybackUrlCacheKey(song, quality);
-    if (!nocache && key) {
-        const cached = getCachedPlaybackUrl(song, quality);
-        if (cached) return Promise.resolve(cached);
-        const pending = playbackUrlRequests.get(key);
-        if (pending) return pending;
-    }
-
-    let url = API.getSongUrl(song, quality);
-    if (nocache) url += '&nocache=true';
-
-    const request = API.fetchJson(url).then((data) => {
-        if (!data || !data.url) {
-            throw new Error('无法获取音频播放地址');
-        }
-        if (!nocache && key && data && data.url) {
-            playbackUrlCache.set(key, {
-                data,
-                expiresAt: Date.now() + PLAYBACK_URL_CACHE_TTL,
-            });
-            while (playbackUrlCache.size > 8) {
-                playbackUrlCache.delete(playbackUrlCache.keys().next().value);
-            }
-        }
-        return data;
-    }).finally(() => {
-        if (key && playbackUrlRequests.get(key) === request) {
-            playbackUrlRequests.delete(key);
-        }
-    });
-
-    if (!nocache && key) playbackUrlRequests.set(key, request);
-    return request;
-}
-
-function getPlaybackQueueContext() {
-    if (state.currentList === 'favorite') {
-        return {
-            kind: 'favorite',
-            songs: ensureFavoriteSongsArray(),
-            index: state.currentFavoriteIndex,
-            mode: state.favoritePlayMode || 'list',
-        };
-    }
-
-    if (state.currentPlaylist === 'search') {
-        return { kind: 'search', songs: state.searchResults, index: state.currentTrackIndex, mode: state.playMode || 'list' };
-    }
-    if (state.currentPlaylist === 'online') {
-        return { kind: 'online', songs: state.onlineSongs, index: state.currentTrackIndex, mode: state.playMode || 'list' };
-    }
-    if (state.currentPlaylist === 'playlist') {
-        return { kind: 'playlist', songs: state.playlistSongs, index: state.currentTrackIndex, mode: state.playMode || 'list' };
-    }
-    return null;
-}
-
-function isPrefetchedNextPlaybackValid(target) {
-    if (!target) return false;
-    const context = getPlaybackQueueContext();
-    if (!context || context.kind !== target.kind || context.index !== target.currentIndex || context.mode !== target.mode) {
-        return false;
-    }
-    if (target.currentSongKey !== getSongKey(state.currentSong)) return false;
-    if (target.quality !== (state.playbackQuality || '320')) return false;
-    return context.songs[target.index] === target.song
-        || getSongKey(context.songs[target.index]) === getSongKey(target.song);
-}
-
-function getNextPlaybackTarget() {
-    const context = getPlaybackQueueContext();
-    if (!context || !Array.isArray(context.songs) || context.songs.length === 0 || context.index < 0) {
-        return null;
-    }
-    if (context.mode === 'single') return null;
-
-    if (isPrefetchedNextPlaybackValid(prefetchedNextPlayback)) {
-        return prefetchedNextPlayback;
-    }
-
-    const index = context.mode === 'random'
-        ? Math.floor(Math.random() * context.songs.length)
-        : (context.index + 1) % context.songs.length;
-    const song = context.songs[index];
-    if (!song) return null;
-
-    return {
-        kind: context.kind,
-        currentIndex: context.index,
-        currentSongKey: getSongKey(state.currentSong),
-        quality: state.playbackQuality || '320',
-        mode: context.mode,
-        index,
-        song,
-    };
-}
-
-function prefetchNextPlaybackUrl() {
-    const target = getNextPlaybackTarget();
-    if (!target) {
-        prefetchedNextPlayback = null;
-        return;
-    }
-    if (target === prefetchedNextPlayback) {
-        if (target.retryAfter && target.retryAfter > Date.now()) return;
-        const quality = state.playbackQuality || '320';
-        const key = getPlaybackUrlCacheKey(target.song, quality);
-        if (getCachedPlaybackUrl(target.song, quality) || (key && playbackUrlRequests.has(key))) return;
-    }
-
-    prefetchedNextPlayback = target;
-    const quality = state.playbackQuality || '320';
-    fetchPlaybackUrlData(target.song, quality).catch((error) => {
-        debugLog('预加载下一首播放地址失败，将在切歌时重新获取', error);
-        if (prefetchedNextPlayback === target) {
-            target.retryAfter = Date.now() + 15000;
-        }
-    });
-}
-
-function getNextPlaybackOptions(song, options = {}) {
-    return {
-        autoplayImmediate: options.autoplayImmediate === true,
-        resolvedAudioData: getCachedPlaybackUrl(song, state.playbackQuality || '320'),
-    };
-}
-
-dom.audioPlayer.addEventListener('timeupdate', prefetchNextPlaybackUrl);
 
 // 修复：播放歌曲函数 - 支持统一播放列表
 function waitForAudioReady(player) {
@@ -6212,8 +6057,6 @@ async function playSong(song, options = {}) {
         startTime = 0,
         preserveProgress = false,
         isRetry = false,
-        autoplayImmediate = false,
-        resolvedAudioData = null,
         playbackRequestId: existingPlaybackRequestId
     } = options;
     if (!song) return;
@@ -6235,13 +6078,13 @@ async function playSong(song, options = {}) {
         updateCurrentSongInfo(song, { loadArtwork: false });
 
         const quality = state.playbackQuality || '320';
-        const audioUrl = API.getSongUrl(song, quality) + (isRetry ? '&nocache=true' : '');
+        let audioUrl = API.getSongUrl(song, quality);
+        if (isRetry) {
+            audioUrl += '&nocache=true';
+        }
         debugLog(`获取音频URL: ${audioUrl}`);
 
-        let audioData = isRetry ? null : (resolvedAudioData || getCachedPlaybackUrl(song, quality));
-        if (!audioData) {
-            audioData = await fetchPlaybackUrlData(song, quality, { nocache: isRetry });
-        }
+        const audioData = await API.fetchJson(audioUrl);
         if (!isCurrentPlaybackRequest()) return;
 
         if (!audioData || !audioData.url) {
@@ -6293,26 +6136,11 @@ async function playSong(song, options = {}) {
         let selectedAudioUrl = null;
         let lastAudioError = null;
         let usedFallbackAudio = false;
-        let playPromise = null;
 
         for (const candidateUrl of candidateAudioUrls) {
             if (!isCurrentPlaybackRequest()) return;
             dom.audioPlayer.src = candidateUrl;
             dom.audioPlayer.load();
-
-            // 已缓存下一首地址时，在 ended 事件的同一轮同步调用 play()；
-            // 不等 loadedmetadata，避免后台页面恢复前一直停在曲间。
-            if (autoplay && autoplayImmediate && !playPromise && candidateUrl === primaryAudioUrl) {
-                try {
-                    playPromise = dom.audioPlayer.play();
-                    if (playPromise && typeof playPromise.catch === 'function') {
-                        playPromise.catch(() => {});
-                    }
-                } catch (error) {
-                    console.warn('立即启动下一首失败，将在音频就绪后重试:', error);
-                    playPromise = null;
-                }
-            }
 
             try {
                 await waitForAudioReady(dom.audioPlayer);
@@ -6351,10 +6179,10 @@ async function playSong(song, options = {}) {
 
         state.lastSavedPlaybackTime = state.currentPlaybackTime;
 
+        let playPromise = null;
+
         if (autoplay) {
-            if (!playPromise) {
-                playPromise = dom.audioPlayer.play();
-            }
+            playPromise = dom.audioPlayer.play();
             if (playPromise !== undefined) {
                 playPromise.catch(async error => {
                     if (!isCurrentPlaybackRequest()) return;
@@ -6379,9 +6207,6 @@ async function playSong(song, options = {}) {
         }
 
         scheduleDeferredSongAssets(song, playPromise, playbackRequestId);
-        if (autoplay) {
-            prefetchNextPlaybackUrl();
-        }
 
         debugLog(`开始播放: ${song.name} @${quality}`);
 
@@ -6465,19 +6290,12 @@ function autoPlayNext() {
         return;
     }
 
-    playNext({ autoplayImmediate: true });
+    playNext();
     updatePlayPauseButton();
 }
 
 // 修复：播放下一首 - 支持播放模式和统一播放列表
-function playNext(options = {}) {
-    const cachedNextTarget = isPrefetchedNextPlaybackValid(prefetchedNextPlayback)
-        ? prefetchedNextPlayback
-        : null;
-    if (!cachedNextTarget) {
-        prefetchedNextPlayback = null;
-    }
-
+function playNext() {
     if (state.currentList === "favorite") {
         const favorites = ensureFavoriteSongsArray();
         if (favorites.length === 0) {
@@ -6486,9 +6304,7 @@ function playNext(options = {}) {
         }
         const mode = state.favoritePlayMode || "list";
         let nextIndex = state.currentFavoriteIndex;
-        if (cachedNextTarget && cachedNextTarget.kind === 'favorite') {
-            nextIndex = cachedNextTarget.index;
-        } else if (mode === "random") {
+        if (mode === "random") {
             nextIndex = Math.floor(Math.random() * favorites.length);
         } else if (mode === "list") {
             nextIndex = (state.currentFavoriteIndex + 1) % favorites.length;
@@ -6496,10 +6312,7 @@ function playNext(options = {}) {
         if (mode !== "single") {
             state.currentFavoriteIndex = nextIndex;
         }
-        const targetSong = favorites[state.currentFavoriteIndex];
-        const playbackOptions = getNextPlaybackOptions(targetSong, options);
-        prefetchedNextPlayback = null;
-        playFavoriteSong(state.currentFavoriteIndex, playbackOptions);
+        playFavoriteSong(state.currentFavoriteIndex);
         return;
     }
 
@@ -6520,9 +6333,7 @@ function playNext(options = {}) {
     }
 
     const mode = state.playMode || "list";
-    if (cachedNextTarget && cachedNextTarget.kind === state.currentPlaylist) {
-        nextIndex = cachedNextTarget.index;
-    } else if (mode === "random") {
+    if (mode === "random") {
         // 随机播放
         nextIndex = Math.floor(Math.random() * playlist.length);
     } else if (mode === "list") {
@@ -6537,15 +6348,13 @@ function playNext(options = {}) {
     }
 
     const targetIndex = mode === "single" ? state.currentTrackIndex : nextIndex;
-    const playbackOptions = getNextPlaybackOptions(playlist[targetIndex], options);
-    prefetchedNextPlayback = null;
 
     if (state.currentPlaylist === "playlist") {
-        playPlaylistSong(targetIndex, playbackOptions);
+        playPlaylistSong(targetIndex);
     } else if (state.currentPlaylist === "online") {
-        playOnlineSong(targetIndex, playbackOptions);
+        playOnlineSong(targetIndex);
     } else if (state.currentPlaylist === "search") {
-        playSearchResult(targetIndex, playbackOptions);
+        playSearchResult(targetIndex);
     }
 }
 
@@ -6614,7 +6423,7 @@ function playPrevious() {
 }
 
 // 修复：在线音乐播放函数
-async function playOnlineSong(index, playbackOptions = {}) {
+async function playOnlineSong(index) {
     const song = state.onlineSongs[index];
     if (!song) return;
 
@@ -6633,7 +6442,7 @@ async function playOnlineSong(index, playbackOptions = {}) {
     }
 
     try {
-        await playSong(song, playbackOptions);
+        await playSong(song);
         updatePlaylistHighlight();
         updatePlayModeUI();
         renderPlaylist();
