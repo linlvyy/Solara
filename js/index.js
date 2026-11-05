@@ -6189,17 +6189,6 @@ function getNextPlaybackOptions(song, options = {}) {
 
 dom.audioPlayer.addEventListener('timeupdate', prefetchNextPlaybackUrl);
 
-function configureBackgroundAudioSession() {
-    try {
-        const audioSession = navigator.audioSession;
-        if (audioSession && audioSession.type !== 'playback') {
-            audioSession.type = 'playback';
-        }
-    } catch (error) {
-        debugLog('设置后台音乐音频会话失败，继续使用浏览器默认设置', error);
-    }
-}
-
 // 修复：播放歌曲函数 - 支持统一播放列表
 function waitForAudioReady(player) {
     if (!player) return Promise.resolve();
@@ -6235,11 +6224,6 @@ async function playSong(song, options = {}) {
         playbackRequestId: existingPlaybackRequestId
     } = options;
     if (!song) return;
-    if (autoplay) {
-        // 有 Audio Session API 的浏览器里明确声明这是持续音乐播放，
-        // 尽量让系统按媒体播放会话处理锁屏与后台音频。
-        configureBackgroundAudioSession();
-    }
     const playbackRequestId = Number.isInteger(existingPlaybackRequestId)
         ? existingPlaybackRequestId
         : ++playbackRequestSerial;
