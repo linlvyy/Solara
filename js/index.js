@@ -1818,7 +1818,11 @@ bootstrapPersistentStorage();
     });
 
     audio.addEventListener('pause', () => {
-        navigator.mediaSession.playbackState = 'paused';
+        // 歌曲自然结束时，暂停事件只是曲目交接的一部分；
+        // 保持媒体会话存活，避免锁屏先显示“已暂停”再切下一首。
+        if (!audio.ended) {
+            navigator.mediaSession.playbackState = 'paused';
+        }
         updatePositionState();
         lastPositionUpdateTime = Date.now();
     });
@@ -1837,7 +1841,6 @@ bootstrapPersistentStorage();
     audio.addEventListener('seeked', updatePositionState);
 
     audio.addEventListener('ended', () => {
-        navigator.mediaSession.playbackState = 'paused';
         updatePositionState();
         const refresh = () => {
             triggerMediaSessionMetadataRefresh();
@@ -1846,8 +1849,11 @@ bootstrapPersistentStorage();
         if (typeof autoPlayNext === 'function') {
             try {
                 audio[MEDIA_SESSION_ENDED_FLAG] = 'handling';
-                autoPlayNext();
+                const advanced = autoPlayNext();
                 audio[MEDIA_SESSION_ENDED_FLAG] = 'skip';
+                if (advanced !== true) {
+                    navigator.mediaSession.playbackState = 'paused';
+                }
                 Promise.resolve().then(refresh);
                 return;
             } catch (error) {
@@ -1858,6 +1864,9 @@ bootstrapPersistentStorage();
         if (typeof window.playNext === 'function') {
             try {
                 const result = window.playNext();
+                if (result !== true) {
+                    navigator.mediaSession.playbackState = 'paused';
+                }
                 if (typeof updatePlayPauseButton === 'function') {
                     updatePlayPauseButton();
                 }
@@ -1871,6 +1880,7 @@ bootstrapPersistentStorage();
                 console.warn('自动播放下一首失败:', error);
             }
         }
+        navigator.mediaSession.playbackState = 'paused';
         refresh();
     });
 
@@ -6280,18 +6290,32 @@ function scheduleDeferredSongAssets(song, playPromise, playbackRequestId = playb
 function autoPlayNext() {
     if (dom.audioPlayer && dom.audioPlayer.__solaraMediaSessionHandledEnded === 'skip') {
         dom.audioPlayer.__solaraMediaSessionHandledEnded = false;
-        return;
+        return false;
     }
     const mode = getActivePlayMode();
     if (mode === "single") {
         // 单曲循环
         dom.audioPlayer.currentTime = 0;
-        dom.audioPlayer.play();
-        return;
+        try {
+            const playPromise = dom.audioPlayer.play();
+            if (playPromise && typeof playPromise.catch === "function") {
+                playPromise.catch((error) => {
+                    console.warn("单曲循环播放失败:", error);
+                    if ("mediaSession" in navigator) {
+                        navigator.mediaSession.playbackState = "paused";
+                    }
+                });
+            }
+            return true;
+        } catch (error) {
+            console.warn("单曲循环播放失败:", error);
+            return false;
+        }
     }
 
-    playNext();
+    const advanced = playNext();
     updatePlayPauseButton();
+    return advanced;
 }
 
 // 修复：播放下一首 - 支持播放模式和统一播放列表
@@ -6300,7 +6324,7 @@ function playNext() {
         const favorites = ensureFavoriteSongsArray();
         if (favorites.length === 0) {
             clearLyricsIfLibraryEmpty();
-            return;
+            return false;
         }
         const mode = state.favoritePlayMode || "list";
         let nextIndex = state.currentFavoriteIndex;
@@ -6313,7 +6337,7 @@ function playNext() {
             state.currentFavoriteIndex = nextIndex;
         }
         playFavoriteSong(state.currentFavoriteIndex);
-        return;
+        return true;
     }
 
     let nextIndex = -1;
@@ -6329,7 +6353,7 @@ function playNext() {
 
     if (playlist.length === 0) {
         clearLyricsIfLibraryEmpty();
-        return;
+        return false;
     }
 
     const mode = state.playMode || "list";
@@ -6348,6 +6372,9 @@ function playNext() {
     }
 
     const targetIndex = mode === "single" ? state.currentTrackIndex : nextIndex;
+    if (targetIndex < 0 || targetIndex >= playlist.length) {
+        return false;
+    }
 
     if (state.currentPlaylist === "playlist") {
         playPlaylistSong(targetIndex);
@@ -6355,7 +6382,10 @@ function playNext() {
         playOnlineSong(targetIndex);
     } else if (state.currentPlaylist === "search") {
         playSearchResult(targetIndex);
+    } else {
+        return false;
     }
+    return true;
 }
 
 // 修复：播放上一首 - 支持播放模式和统一播放列表
